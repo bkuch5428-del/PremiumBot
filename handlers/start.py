@@ -61,8 +61,12 @@ PAYMENT_TEXT = (
 
 async def send_demo_videos(bot: Bot, chat_id: int) -> None:
     """
-    Copy each demo message from the private channel to the user.
-    Each copy is tried independently — one failure never stops the rest.
+    Copy demo messages from the private channel to the user as a single album.
+
+    Uses copy_messages() (Bot API 7.0 / aiogram 3.4+) which copies all
+    message IDs in one call and re-groups them as an album when the originals
+    were part of a media group. Falls back to individual copy_message() calls
+    if the batch call fails for any reason.
     """
     print("SOURCE_CHANNEL_ID:", SOURCE_CHANNEL_ID)
     print("DEMO_MESSAGE_IDS:", DEMO_MESSAGE_IDS)
@@ -72,6 +76,18 @@ async def send_demo_videos(bot: Bot, chat_id: int) -> None:
         logger.warning("SOURCE_CHANNEL_ID is not set — skipping demo videos.")
         return
 
+    # ── Primary: send as a single album ──────────────────────────────────────
+    try:
+        await bot.copy_messages(
+            chat_id=chat_id,
+            from_chat_id=SOURCE_CHANNEL_ID,
+            message_ids=DEMO_MESSAGE_IDS,
+        )
+        return
+    except Exception:
+        logger.exception("copy_messages() failed — falling back to individual sends")
+
+    # ── Fallback: send one by one ─────────────────────────────────────────────
     for message_id in DEMO_MESSAGE_IDS:
         try:
             await bot.copy_message(
@@ -85,7 +101,6 @@ async def send_demo_videos(bot: Bot, chat_id: int) -> None:
                 message_id,
                 SOURCE_CHANNEL_ID,
             )
-        # Always wait between copies — even after a failure — for stability
         await asyncio.sleep(0.25)
 
 
