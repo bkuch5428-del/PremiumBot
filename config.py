@@ -7,3 +7,6 @@ BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is not set. Check your .env file.")
+
+SOURCE_CHANNEL_ID: str = os.getenv("SOURCE_CHANNEL_ID", "")
+DEMO_MESSAGE_IDS: list[int] = [1, 2, 3, 4, 5, 6]
