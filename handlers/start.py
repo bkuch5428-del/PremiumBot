@@ -31,11 +31,7 @@ WELCOME_TEXT = (
 
 PRODUCT_TEXT = (
     "Hello, {first_name} 👋\n\n"
-    "Choose a plan to get started.\n\n"
-    "━━━━━━━━━━━━━━\n\n"
-    "🥵 PREMIUM MAAL\n"
-    "💰 ₹49 / 30 Days\n\n"
-    "━━━━━━━━━━━━━━"
+    "Choose a plan to get started 💋"
 )
 
 PLAN_TEXT = (
