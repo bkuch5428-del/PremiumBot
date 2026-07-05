@@ -2,3 +2,5 @@ aiogram==3.21.0
 python-dotenv==1.2.2
 aiosqlite==0.22.1
 aiohttp==3.12.15
+flask==3.1.1
+flask==3.1.1
