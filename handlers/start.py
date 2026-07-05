@@ -64,7 +64,11 @@ async def send_demo_videos(bot: Bot, chat_id: int) -> list[int]:
     Returns a list of the sent message IDs for auto-deletion tracking.
     Each copy is tried independently — one failure never stops the rest.
     """
+    print("SOURCE_CHANNEL_ID:", SOURCE_CHANNEL_ID)
+    print("DEMO_MESSAGE_IDS:", DEMO_MESSAGE_IDS)
+
     if not SOURCE_CHANNEL_ID:
+        print("SOURCE_CHANNEL_ID not set, skipping demo video")
         logger.warning("SOURCE_CHANNEL_ID is not set — skipping demo videos.")
         return []
 
