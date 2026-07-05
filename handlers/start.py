@@ -36,28 +36,59 @@ PRODUCT_TEXT = (
     "━━━━━━━━━━━━━━"
 )
 
+AUTO_DELETE_DELAY = 300  # seconds
 
-async def send_demo_videos(bot: Bot, chat_id: int) -> None:
-    """Copy demo messages from the private channel to the user in fast sequence."""
+
+# ── Auto-delete helper ────────────────────────────────────────────────────────
+
+async def _delete_after(bot: Bot, chat_id: int, msg_ids: list[int]) -> None:
+    """Wait AUTO_DELETE_DELAY seconds, then silently delete each tracked message."""
+    await asyncio.sleep(AUTO_DELETE_DELAY)
+    for msg_id in msg_ids:
+        try:
+            await bot.delete_message(chat_id, msg_id)
+        except Exception:
+            pass
+
+
+def _schedule_delete(bot: Bot, chat_id: int, msg_ids: list[int]) -> None:
+    """Fire-and-forget: schedule deletion without blocking the handler."""
+    asyncio.create_task(_delete_after(bot, chat_id, msg_ids))
+
+
+# ── Demo video sender ─────────────────────────────────────────────────────────
+
+async def send_demo_videos(bot: Bot, chat_id: int) -> list[int]:
+    """
+    Copy each demo message from the private channel to the user.
+    Returns a list of the sent message IDs for auto-deletion tracking.
+    Each copy is tried independently — one failure never stops the rest.
+    """
     if not SOURCE_CHANNEL_ID:
         logger.warning("SOURCE_CHANNEL_ID is not set — skipping demo videos.")
-        return
+        return []
 
+    sent_ids: list[int] = []
     for message_id in DEMO_MESSAGE_IDS:
         try:
-            await bot.copy_message(
+            msg = await bot.copy_message(
                 chat_id=chat_id,
                 from_chat_id=SOURCE_CHANNEL_ID,
                 message_id=message_id,
             )
-            await asyncio.sleep(0.1)
+            sent_ids.append(msg.message_id)
         except Exception:
             logger.exception(
                 "Failed to copy message %s from channel %s",
                 message_id,
                 SOURCE_CHANNEL_ID,
             )
+        # Always wait between copies — even after a failure — for stability
+        await asyncio.sleep(0.25)
+    return sent_ids
 
+
+# ── Handlers ──────────────────────────────────────────────────────────────────
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, bot: Bot) -> None:
@@ -68,21 +99,32 @@ async def cmd_start(message: Message, bot: Bot) -> None:
     except Exception:
         logger.exception("Failed to save user %s", user.id)
 
-    await send_demo_videos(bot, message.chat.id)
-    await message.answer(WELCOME_TEXT)
-    await message.answer(
+    tracked: list[int] = []
+
+    tracked.extend(await send_demo_videos(bot, message.chat.id))
+
+    welcome_msg = await message.answer(WELCOME_TEXT)
+    tracked.append(welcome_msg.message_id)
+
+    product_msg = await message.answer(
         PRODUCT_TEXT.format(first_name=user.first_name),
         reply_markup=product_keyboard(),
     )
+    tracked.append(product_msg.message_id)
+
+    _schedule_delete(bot, message.chat.id, tracked)
 
 
 @router.callback_query(lambda c: c.data == "demo")
 async def callback_demo(call: CallbackQuery, bot: Bot) -> None:
     await call.answer()
-    await send_demo_videos(bot, call.message.chat.id)
+    sent_ids = await send_demo_videos(bot, call.message.chat.id)
+    if sent_ids:
+        _schedule_delete(bot, call.message.chat.id, sent_ids)
 
 
 @router.callback_query(lambda c: c.data == "buy")
 async def callback_buy(call: CallbackQuery) -> None:
     await call.answer()
-    await call.message.answer("Payment system will be added in the next update.")
+    msg = await call.message.answer("Payment system will be added in the next update.")
+    _schedule_delete(call.bot, call.message.chat.id, [msg.message_id])
