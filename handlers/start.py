@@ -5,13 +5,15 @@ from aiogram import Router, Bot
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 
-from config import SOURCE_CHANNEL_ID, DEMO_MESSAGE_IDS
+from config import SOURCE_CHANNEL_ID, DEMO_MESSAGE_IDS, QR_IMAGE_URL
 from database import save_user
-from keyboards.menu import product_keyboard
+from keyboards.menu import product_keyboard, plan_keyboard, payment_keyboard, PLAN_BUTTON_TEXT
 
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+# ── Static texts ──────────────────────────────────────────────────────────────
 
 WELCOME_TEXT = (
     "🎉 <b>Welcome to Premium Leaks Robot!</b>\n\n"
@@ -34,6 +36,28 @@ PRODUCT_TEXT = (
     "🥵 PREMIUM MAAL\n"
     "💰 ₹49 / 30 Days\n\n"
     "━━━━━━━━━━━━━━"
+)
+
+PLAN_TEXT = (
+    "💦 Full Desi Indian content approx 40000+ videos💦\n\n"
+    "🫦Buy now to get access🫦\n\n"
+    "📦 💦 𝐑𝐞𝐚𝐥 𝐈𝐧𝐝!𝐚𝐧 𝐃ē𝐬𝐢 𝐏𝟎𝐫𝐧 🫦\n"
+    "💰 Price: ₹49 | ⏳ 30 Days"
+)
+
+PAYMENT_CAPTION = (
+    "📲 Scan the QR code above using any UPI app.\n\n"
+    "💰 Amount: ₹49.00\n\n"
+    "After completing the payment, tap the button below to verify your payment."
+)
+
+PAYMENT_TEXT = (
+    "💳 <b>Payment Details</b>\n\n"
+    "📦 Plan: 💦 𝐑𝐞𝐚𝐥 𝐈𝐧𝐝!𝐚𝐧 𝐃ē𝐬𝐢 𝐏𝟎𝐫𝐧 🫦\n"
+    "💰 Amount: ₹49.00\n"
+    "⏳ Validity: 30 Days\n\n"
+    "📲 Scan the QR code using any UPI app.\n\n"
+    "After completing the payment, tap the button below to verify your payment."
 )
 
 
@@ -81,7 +105,6 @@ async def cmd_start(message: Message, bot: Bot) -> None:
         logger.exception("Failed to save user %s", user.id)
 
     await send_demo_videos(bot, message.chat.id)
-
     await message.answer(WELCOME_TEXT)
     await message.answer(
         PRODUCT_TEXT.format(first_name=user.first_name),
@@ -89,13 +112,52 @@ async def cmd_start(message: Message, bot: Bot) -> None:
     )
 
 
-@router.callback_query(lambda c: c.data == "demo")
-async def callback_demo(call: CallbackQuery, bot: Bot) -> None:
+@router.callback_query(lambda c: c.data == "plan")
+async def callback_plan(call: CallbackQuery, bot: Bot) -> None:
+    """User tapped the plan button — send demo videos then plan details."""
     await call.answer()
     await send_demo_videos(bot, call.message.chat.id)
+    await call.message.answer(PLAN_TEXT, reply_markup=plan_keyboard())
 
 
 @router.callback_query(lambda c: c.data == "buy")
-async def callback_buy(call: CallbackQuery) -> None:
+async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
+    """User tapped Buy Now — send QR (if configured) + payment instructions."""
     await call.answer()
-    await call.message.answer("Payment system will be added in the next update.")
+    if QR_IMAGE_URL:
+        await bot.send_photo(
+            chat_id=call.message.chat.id,
+            photo=QR_IMAGE_URL,
+            caption=PAYMENT_CAPTION,
+            reply_markup=payment_keyboard(),
+        )
+    else:
+        await call.message.answer(PAYMENT_TEXT, reply_markup=payment_keyboard())
+
+
+@router.callback_query(lambda c: c.data == "back")
+async def callback_back(call: CallbackQuery) -> None:
+    """User tapped Back — return to product screen."""
+    await call.answer()
+    await call.message.answer(
+        PRODUCT_TEXT.format(first_name=call.from_user.first_name),
+        reply_markup=product_keyboard(),
+    )
+
+
+@router.callback_query(lambda c: c.data == "check_payment")
+async def callback_check_payment(call: CallbackQuery) -> None:
+    await call.answer()
+    await call.message.answer(
+        "Payment verification system will be added in the next update."
+    )
+
+
+@router.callback_query(lambda c: c.data == "cancel_payment")
+async def callback_cancel_payment(call: CallbackQuery) -> None:
+    """User cancelled payment — return to product screen."""
+    await call.answer()
+    await call.message.answer(
+        PRODUCT_TEXT.format(first_name=call.from_user.first_name),
+        reply_markup=product_keyboard(),
+    )

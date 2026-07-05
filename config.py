@@ -10,3 +10,7 @@ if not BOT_TOKEN:
 
 SOURCE_CHANNEL_ID: str = os.getenv("SOURCE_CHANNEL_ID", "-1004483132545")
 DEMO_MESSAGE_IDS: list[int] = [2, 3, 4, 5, 6]
+
+# Set this to your UPI QR code image URL to show it in the payment screen.
+# Leave empty to show payment details as text only.
+QR_IMAGE_URL: str = os.getenv("QR_IMAGE_URL", "")
