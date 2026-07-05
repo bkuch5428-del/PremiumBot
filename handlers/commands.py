@@ -25,8 +25,10 @@ PLANS = [
 
 # ── /plans ────────────────────────────────────────────────────────────────────
 
-@router.message(Command("plans"))
+@router.message(Command("plans", ignore_case=True))
 async def cmd_plans(message: Message) -> None:
+    print("Received command: /plans")
+    logger.info("Received command: /plans from user %s", message.from_user.id)
     for plan in PLANS:
         text = (
             f"{plan['name']}\n"
@@ -42,16 +44,20 @@ async def cmd_plans(message: Message) -> None:
 
 # ── /status ───────────────────────────────────────────────────────────────────
 
-@router.message(Command("status"))
+@router.message(Command("status", ignore_case=True))
 async def cmd_status(message: Message) -> None:
+    print("Received command: /status")
+    logger.info("Received command: /status from user %s", message.from_user.id)
     # Placeholder — replace with real subscription lookup when payment is integrated.
     await message.answer("❌ No active subscription found.")
 
 
 # ── /help ─────────────────────────────────────────────────────────────────────
 
-@router.message(Command("help"))
+@router.message(Command("help", ignore_case=True))
 async def cmd_help(message: Message) -> None:
+    print("Received command: /help")
+    logger.info("Received command: /help from user %s", message.from_user.id)
     await message.answer(
         "❓ <b>Help Center</b>\n\n"
         "• Use /plans to view available plans.\n"
@@ -63,11 +69,13 @@ async def cmd_help(message: Message) -> None:
 
 # ── /contact ──────────────────────────────────────────────────────────────────
 
-@router.message(Command("contact"))
+@router.message(Command("contact", ignore_case=True))
 async def cmd_contact(message: Message) -> None:
+    print("Received command: /contact")
+    logger.info("Received command: /contact from user %s", message.from_user.id)
     await message.answer(
         "📞 <b>Support</b>\n\n"
         "Need help?\n\n"
-        f"Join our official support group:\n\n"
+        "Join our official support group:\n\n"
         f"{SUPPORT_GROUP_URL}"
     )

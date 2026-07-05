@@ -11,8 +11,8 @@ from aiogram.types import BotCommand
 
 from config import BOT_TOKEN
 from database import init_db
-from handlers import start
 from handlers import commands
+from handlers import start
 
 logging.basicConfig(level=logging.INFO)
 
@@ -46,10 +46,17 @@ async def main() -> None:
     await init_db()
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+
+    # Drop any pending webhook or stale session left by another instance
+    # so this instance becomes the sole update consumer immediately.
+    await bot.delete_webhook(drop_pending_updates=True)
+
     dp = Dispatcher()
 
-    dp.include_router(start.router)
+    # commands.router is registered first so its Command() filters are
+    # evaluated before start.router's handlers.
     dp.include_router(commands.router)
+    dp.include_router(start.router)
 
     await bot.set_my_commands(BOT_COMMANDS)
 

@@ -97,6 +97,8 @@ async def send_demo_videos(bot: Bot, chat_id: int) -> None:
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, bot: Bot) -> None:
+    print("Received command: /start")
+    logger.info("Received command: /start from user %s", message.from_user.id)
     user = message.from_user
 
     try:
