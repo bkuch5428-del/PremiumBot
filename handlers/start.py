@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from aiogram import Router, Bot
@@ -23,23 +24,21 @@ WELCOME_TEXT = (
     "✨ 10000+ C!p! videos\n"
     "✨  25000+ R!p! videos\n"
     "✨  M0m $0n 5k Videos\n\n"
-    "✨ <b>TRY OUR ANY PLAN FOR CHECKING THE QUALITY</b> ✨\n\n"
-    "━━━━━━━━━━━━━━\n\n"
-    "🚀 Try our premium plan today and experience the quality yourself!"
+    "✨ <b>TRY OUR ANY PLAN FOR CHECKING THE QUALITY</b> ✨"
 )
 
 PRODUCT_TEXT = (
     "Hello, {first_name} 👋\n\n"
     "Choose a plan to get started.\n\n"
     "━━━━━━━━━━━━━━\n\n"
-    "💎 Title\n"
+    "🥵 PREMIUM MAAL\n"
     "💰 ₹49 / 30 Days\n\n"
     "━━━━━━━━━━━━━━"
 )
 
 
 async def send_demo_videos(bot: Bot, chat_id: int) -> None:
-    """Copy demo messages from the private channel to the user."""
+    """Copy demo messages from the private channel to the user in fast sequence."""
     if not SOURCE_CHANNEL_ID:
         logger.warning("SOURCE_CHANNEL_ID is not set — skipping demo videos.")
         return
@@ -51,6 +50,7 @@ async def send_demo_videos(bot: Bot, chat_id: int) -> None:
                 from_chat_id=SOURCE_CHANNEL_ID,
                 message_id=message_id,
             )
+            await asyncio.sleep(0.1)
         except Exception:
             logger.exception(
                 "Failed to copy message %s from channel %s",

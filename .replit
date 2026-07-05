@@ -31,3 +31,8 @@ outputType = "console"
 [[ports]]
 localPort = 8080
 externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+SOURCE_CHANNEL_ID = "-1004483132545"
