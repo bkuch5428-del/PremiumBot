@@ -7,10 +7,12 @@ from flask import Flask
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 
 from config import BOT_TOKEN
 from database import init_db
 from handlers import start
+from handlers import commands
 
 logging.basicConfig(level=logging.INFO)
 
@@ -31,6 +33,15 @@ def run_flask() -> None:
 
 # ── Telegram bot ──────────────────────────────────────────────────────────────
 
+BOT_COMMANDS = [
+    BotCommand(command="start",   description="Start the bot"),
+    BotCommand(command="plans",   description="View available plans"),
+    BotCommand(command="status",  description="Check your subscription status"),
+    BotCommand(command="help",    description="Help & usage guide"),
+    BotCommand(command="contact", description="Contact support"),
+]
+
+
 async def main() -> None:
     await init_db()
 
@@ -38,6 +49,9 @@ async def main() -> None:
     dp = Dispatcher()
 
     dp.include_router(start.router)
+    dp.include_router(commands.router)
+
+    await bot.set_my_commands(BOT_COMMANDS)
 
     await dp.start_polling(bot)
 
