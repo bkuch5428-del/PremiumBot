@@ -19,3 +19,11 @@ SUPPORT_GROUP_URL: str = os.getenv("SUPPORT_GROUP_URL", "https://t.me/+i7Ox197t4
 
 # Channel where new-user and activity events are logged.
 LOG_CHANNEL_ID: int = int(os.getenv("LOG_CHANNEL_ID", "-1003923230922"))
+
+# Channel where payment screenshots / UTRs are forwarded for admin review.
+PAYMENT_REVIEW_CHANNEL_ID: int = int(os.getenv("PAYMENT_REVIEW_CHANNEL_ID", "0"))
+
+# Active plan details — single source of truth used across all handlers.
+PLAN_NAME: str = "💦 𝐑𝐞𝐚𝐥 𝐈𝐧𝐝!𝐚𝐧 𝐃ē𝐬𝐢 𝐏𝟎𝐫𝐧 🫦"
+PLAN_PRICE: str = "49"
+PLAN_VALIDITY: str = "30 Days"

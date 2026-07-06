@@ -13,6 +13,7 @@ from config import BOT_TOKEN
 from database import init_db
 from handlers import commands
 from handlers import start
+from handlers import payment
 
 logging.basicConfig(level=logging.INFO)
 
@@ -53,9 +54,11 @@ async def main() -> None:
 
     dp = Dispatcher()
 
-    # commands.router is registered first so its Command() filters are
-    # evaluated before start.router's handlers.
+    # Registration order matters for filter priority:
+    # commands first (Command() filters), then payment (includes a broad
+    # message filter for proof collection), then start (catch-all callbacks).
     dp.include_router(commands.router)
+    dp.include_router(payment.router)
     dp.include_router(start.router)
 
     await bot.set_my_commands(BOT_COMMANDS)

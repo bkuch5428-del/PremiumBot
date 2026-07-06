@@ -30,3 +30,31 @@ def payment_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="❌ Cancel Payment", callback_data="cancel_payment")],
         ]
     )
+
+
+def payment_details_keyboard(order_id: str) -> InlineKeyboardMarkup:
+    """Payment details screen — I Have Paid + Cancel."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ I Have Paid", callback_data=f"paid:{order_id}")],
+            [InlineKeyboardButton(text="❌ Cancel", callback_data=f"cancel_order:{order_id}")],
+        ]
+    )
+
+
+def await_proof_keyboard() -> InlineKeyboardMarkup:
+    """Awaiting payment proof — Cancel only."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_proof")],
+        ]
+    )
+
+
+def main_menu_keyboard() -> InlineKeyboardMarkup:
+    """Post-submission confirmation — return to main menu."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🏠 Main Menu", callback_data="main_menu")],
+        ]
+    )
