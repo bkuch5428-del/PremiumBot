@@ -16,3 +16,6 @@ DEMO_MESSAGE_IDS: list[int] = [2, 3, 4, 5, 6]
 QR_IMAGE_URL: str = os.getenv("QR_IMAGE_URL", "")
 
 SUPPORT_GROUP_URL: str = os.getenv("SUPPORT_GROUP_URL", "https://t.me/+i7Ox197t4205MTQ1")
+
+# Channel where new-user and activity events are logged.
+LOG_CHANNEL_ID: int = int(os.getenv("LOG_CHANNEL_ID", "-1003923230922"))

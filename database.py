@@ -23,8 +23,11 @@ async def init_db() -> None:
     logger.info("Database initialised at %s", DB_PATH)
 
 
-async def save_user(user_id: int, username: str | None, first_name: str) -> None:
+async def save_user(user_id: int, username: str | None, first_name: str) -> bool:
+    """Upsert the user record.  Returns True if the user is brand-new."""
     async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT 1 FROM users WHERE id = ?", (user_id,))
+        is_new = await cursor.fetchone() is None
         await db.execute(
             """
             INSERT INTO users (id, username, first_name)
@@ -36,4 +39,5 @@ async def save_user(user_id: int, username: str | None, first_name: str) -> None
             (user_id, username, first_name),
         )
         await db.commit()
-    logger.debug("Saved user %s", user_id)
+    logger.debug("Saved user %s (new=%s)", user_id, is_new)
+    return is_new

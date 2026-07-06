@@ -8,6 +8,7 @@ from aiogram.types import Message, CallbackQuery
 from config import SOURCE_CHANNEL_ID, DEMO_MESSAGE_IDS, QR_IMAGE_URL
 from database import save_user
 from keyboards.menu import product_keyboard, plan_keyboard, payment_keyboard, PLAN_BUTTON_TEXT
+from handlers.log_channel import log_new_user, log_plan_selected, log_payment_started
 
 logger = logging.getLogger(__name__)
 
@@ -113,9 +114,13 @@ async def cmd_start(message: Message, bot: Bot) -> None:
     user = message.from_user
 
     try:
-        await save_user(user.id, user.username, user.first_name)
+        is_new = await save_user(user.id, user.username, user.first_name)
     except Exception:
         logger.exception("Failed to save user %s", user.id)
+        is_new = False
+
+    if is_new:
+        await log_new_user(bot, user.id, user.first_name, user.username)
 
     await send_demo_videos(bot, message.chat.id)
     await message.answer(WELCOME_TEXT)
@@ -129,6 +134,7 @@ async def cmd_start(message: Message, bot: Bot) -> None:
 async def callback_plan(call: CallbackQuery, bot: Bot) -> None:
     """User tapped the plan button — send demo videos then plan details."""
     await call.answer()
+    await log_plan_selected(bot, call.from_user.id, call.from_user.first_name)
     await send_demo_videos(bot, call.message.chat.id)
     await call.message.answer(PLAN_TEXT, reply_markup=plan_keyboard())
 
@@ -137,6 +143,7 @@ async def callback_plan(call: CallbackQuery, bot: Bot) -> None:
 async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
     """User tapped Buy Now — send QR (if configured) + payment instructions."""
     await call.answer()
+    await log_payment_started(bot, call.from_user.id, call.from_user.first_name)
     if QR_IMAGE_URL:
         await bot.send_photo(
             chat_id=call.message.chat.id,
