@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone, timedelta
 
 import aiosqlite
 
@@ -32,6 +33,12 @@ async def init_db() -> None:
             )
             """
         )
+        # Migrate: add subscription columns if this is an existing database.
+        for col in ("subscription_start", "subscription_end"):
+            try:
+                await db.execute(f"ALTER TABLE orders ADD COLUMN {col} TEXT")
+            except Exception:
+                pass  # column already exists — safe to ignore
         await db.commit()
     logger.info("Database initialised at %s", DB_PATH)
 
@@ -85,3 +92,57 @@ async def update_order_status(order_id: str, status: str) -> None:
         )
         await db.commit()
     logger.debug("Order %s → %s", order_id, status)
+
+
+async def approve_order(order_id: str) -> dict | None:
+    """
+    Approve an order:
+      - payment_status  → 'approved'
+      - subscription_start → now (UTC)
+      - subscription_end   → now + plan validity days (UTC)
+
+    Returns a dict with user_id, plan_name, plan_validity, subscription_end
+    (datetime, UTC) so the caller can build the activation notification.
+    Returns None if the order does not exist.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        # Only approve orders that are currently in 'pending' state.
+        # This prevents double-approvals and acting on cancelled/rejected orders.
+        cursor = await db.execute(
+            "SELECT user_id, plan_name, plan_validity FROM orders "
+            "WHERE order_id = ? AND payment_status = 'pending'",
+            (order_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None  # not found or already actioned
+
+        # Parse "30 Days" → 30
+        try:
+            days = int(str(row["plan_validity"]).strip().split()[0])
+        except (ValueError, IndexError):
+            days = 30
+
+        now = datetime.now(timezone.utc)
+        sub_end = now + timedelta(days=days)
+
+        await db.execute(
+            """
+            UPDATE orders
+               SET payment_status    = 'approved',
+                   subscription_start = ?,
+                   subscription_end   = ?
+             WHERE order_id = ?
+            """,
+            (now.isoformat(), sub_end.isoformat(), order_id),
+        )
+        await db.commit()
+
+    logger.info("Order %s approved; sub ends %s", order_id, sub_end.date())
+    return {
+        "user_id":       row["user_id"],
+        "plan_name":     row["plan_name"],
+        "plan_validity": row["plan_validity"],
+        "subscription_end": sub_end,
+    }

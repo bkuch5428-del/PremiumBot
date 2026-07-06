@@ -27,3 +27,6 @@ PAYMENT_REVIEW_CHANNEL_ID: int = int(os.getenv("PAYMENT_REVIEW_CHANNEL_ID", "-10
 PLAN_NAME: str = "💦 𝐑𝐞𝐚𝐥 𝐈𝐧𝐝!𝐚𝐧 𝐃ē𝐬𝐢 𝐏𝟎𝐫𝐧 🫦"
 PLAN_PRICE: str = "49"
 PLAN_VALIDITY: str = "30 Days"
+
+# Public channel link sent to users after plan activation.
+PUBLIC_CHANNEL_URL: str = os.getenv("PUBLIC_CHANNEL_URL", "https://t.me/MoviesMasterUpdates")

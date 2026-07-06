@@ -58,3 +58,15 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏠 Main Menu", callback_data="main_menu")],
         ]
     )
+
+
+def approve_reject_keyboard(order_id: str) -> InlineKeyboardMarkup:
+    """Admin review channel — Approve / Reject buttons for a pending order."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Approve", callback_data=f"approve:{order_id}"),
+                InlineKeyboardButton(text="❌ Reject",  callback_data=f"reject:{order_id}"),
+            ]
+        ]
+    )

@@ -26,12 +26,14 @@ from config import (
     PLAN_NAME,
     PLAN_PRICE,
     PLAN_VALIDITY,
+    PUBLIC_CHANNEL_URL,
 )
-from database import create_order, update_order_status
+from database import create_order, update_order_status, approve_order
 from keyboards.menu import (
     payment_details_keyboard,
     await_proof_keyboard,
     main_menu_keyboard,
+    approve_reject_keyboard,
     product_keyboard,
 )
 from handlers.log_channel import log_payment_started
@@ -219,19 +221,22 @@ async def handle_payment_proof(message: Message, bot: Bot) -> None:
         f"🕒 Time: {_now_ist()}"
     )
 
-    # Forward proof to the admin review channel.
+    # Forward proof to the admin review channel with Approve / Reject buttons.
     try:
         if PAYMENT_REVIEW_CHANNEL_ID:
+            kb = approve_reject_keyboard(order_id)
             if message.photo:
                 await bot.send_photo(
                     chat_id=PAYMENT_REVIEW_CHANNEL_ID,
                     photo=message.photo[-1].file_id,
                     caption=review_caption,
+                    reply_markup=kb,
                 )
             else:
                 await bot.send_message(
                     chat_id=PAYMENT_REVIEW_CHANNEL_ID,
                     text=review_caption + f"\n\n📝 UTR / Transaction ID: {message.text}",
+                    reply_markup=kb,
                 )
         else:
             logger.warning("PAYMENT_REVIEW_CHANNEL_ID not set — skipping review forward")
@@ -246,3 +251,80 @@ async def handle_payment_proof(message: Message, bot: Bot) -> None:
         f"You'll receive a notification once approved.",
         reply_markup=main_menu_keyboard(),
     )
+
+
+# ── Admin: Approve ────────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data and c.data.startswith("approve:"))
+async def callback_approve(call: CallbackQuery, bot: Bot) -> None:
+    """
+    Admin clicked ✅ Approve in the review channel.
+    Updates the order, notifies the user, removes buttons from the review message.
+    Only processes callbacks that originate from PAYMENT_REVIEW_CHANNEL_ID.
+    """
+    # Guard: only honour clicks that came from the review channel itself.
+    if call.message.chat.id != PAYMENT_REVIEW_CHANNEL_ID:
+        await call.answer("⛔ Unauthorized.", show_alert=True)
+        return
+
+    order_id = call.data.split(":", 1)[1]
+    result = await approve_order(order_id)
+    if not result:
+        await call.answer("⚠️ Order not found or already actioned.", show_alert=True)
+        return
+
+    await call.answer("✅ Approved!")
+
+    # Convert UTC subscription_end to IST for display.
+    sub_end_ist = result["subscription_end"].astimezone(_IST)
+    expiry_str = sub_end_ist.strftime("%d %b %Y")
+
+    # Notify the user.
+    try:
+        await bot.send_message(
+            chat_id=result["user_id"],
+            text=(
+                "🎉 <b>Plan Activated!</b>\n\n"
+                f"📦 <b>Plan:</b> {result['plan_name']}\n"
+                f"⏳ <b>Validity:</b> {result['plan_validity']}\n"
+                f"📅 <b>Expires:</b> {expiry_str}\n\n"
+                f"🔗 <b>Your Public Channel:</b>\n"
+                f"{PUBLIC_CHANNEL_URL}\n\n"
+                "Thank you for your purchase! ❤️"
+            ),
+            reply_markup=main_menu_keyboard(),
+        )
+    except Exception:
+        logger.exception("Failed to notify user %s of approval", result["user_id"])
+
+    # Remove the Approve/Reject buttons from the review channel message.
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass  # message may already be edited or too old
+
+
+# ── Admin: Reject (structure ready for next update) ───────────────────────────
+
+@router.callback_query(lambda c: c.data and c.data.startswith("reject:"))
+async def callback_reject(call: CallbackQuery) -> None:
+    """
+    Admin clicked ❌ Reject in the review channel.
+    Full rejection logic (user notification, refund instructions) to be added
+    in the next update.  Buttons are removed so the order is not double-actioned.
+    Only processes callbacks that originate from PAYMENT_REVIEW_CHANNEL_ID.
+    """
+    # Guard: only honour clicks that came from the review channel itself.
+    if call.message.chat.id != PAYMENT_REVIEW_CHANNEL_ID:
+        await call.answer("⛔ Unauthorized.", show_alert=True)
+        return
+
+    order_id = call.data.split(":", 1)[1]
+    await update_order_status(order_id, "rejected")
+    await call.answer("❌ Rejected. Full logic coming in next update.", show_alert=True)
+
+    # Remove buttons from the review message.
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
