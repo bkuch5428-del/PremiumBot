@@ -390,22 +390,54 @@ async def get_stats() -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         now_iso = datetime.now(timezone.utc).isoformat()
 
-        total_users = (await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0]
-        total_plans = (await (await db.execute("SELECT COUNT(*) FROM plans")).fetchone())[0]
-        total_orders = (await (await db.execute("SELECT COUNT(*) FROM orders")).fetchone())[0]
-        pending = (await (await db.execute(
-            "SELECT COUNT(*) FROM orders WHERE payment_status = 'pending'"
+        total_users = (await (await db.execute(
+            "SELECT COUNT(*) FROM users"
         )).fetchone())[0]
+
+        total_plans = (await (await db.execute(
+            "SELECT COUNT(*) FROM plans"
+        )).fetchone())[0]
+
         active_subs = (await (await db.execute(
             "SELECT COUNT(*) FROM orders "
             "WHERE payment_status = 'approved' AND subscription_end >= ?",
             (now_iso,),
         )).fetchone())[0]
 
+        expired_subs = (await (await db.execute(
+            "SELECT COUNT(*) FROM orders "
+            "WHERE payment_status = 'approved' AND subscription_end < ?",
+            (now_iso,),
+        )).fetchone())[0]
+
+        pending = (await (await db.execute(
+            "SELECT COUNT(*) FROM orders WHERE payment_status = 'pending'"
+        )).fetchone())[0]
+
+        approved_orders = (await (await db.execute(
+            "SELECT COUNT(*) FROM orders WHERE payment_status = 'approved'"
+        )).fetchone())[0]
+
+        rejected_orders = (await (await db.execute(
+            "SELECT COUNT(*) FROM orders WHERE payment_status = 'rejected'"
+        )).fetchone())[0]
+
+        # Revenue: sum plan_price (stored as TEXT) for every approved order.
+        # CAST handles numeric strings like "99", "199.50", etc.; non-numeric
+        # values cast to 0 so the sum never raises an error.
+        revenue_row = (await (await db.execute(
+            "SELECT COALESCE(SUM(CAST(plan_price AS REAL)), 0) "
+            "FROM orders WHERE payment_status = 'approved'"
+        )).fetchone())[0]
+        total_revenue = float(revenue_row)
+
     return {
-        "total_users":   total_users,
-        "total_plans":   total_plans,
-        "total_orders":  total_orders,
-        "pending":       pending,
-        "active_subs":   active_subs,
+        "total_users":      total_users,
+        "total_plans":      total_plans,
+        "active_subs":      active_subs,
+        "expired_subs":     expired_subs,
+        "pending":          pending,
+        "approved_orders":  approved_orders,
+        "rejected_orders":  rejected_orders,
+        "total_revenue":    total_revenue,
     }

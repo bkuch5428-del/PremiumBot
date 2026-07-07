@@ -159,13 +159,23 @@ async def cb_stats(call: CallbackQuery) -> None:
         return
     await call.answer()
     s = await get_stats()
+
+    # Format revenue: show as integer when it's a whole number, else 2 d.p.
+    rev = s["total_revenue"]
+    rev_str = f"₹{int(rev):,}" if rev == int(rev) else f"₹{rev:,.2f}"
+
     await call.message.edit_text(
-        "📊 <b>Statistics</b>\n\n"
-        f"👥 Total Users:           {s['total_users']}\n"
-        f"📦 Total Plans:           {s['total_plans']}\n"
-        f"💳 Total Orders:          {s['total_orders']}\n"
-        f"⏳ Pending Payments:      {s['pending']}\n"
-        f"✅ Active Subscriptions:  {s['active_subs']}",
+        "📊 <b>Statistics</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👥  <b>Total Users</b>              {s['total_users']}\n"
+        f"📦  <b>Total Plans</b>              {s['total_plans']}\n\n"
+        f"💰  <b>Total Revenue</b>            {rev_str}\n\n"
+        f"✅  <b>Active Subscriptions</b>     {s['active_subs']}\n"
+        f"❌  <b>Expired Subscriptions</b>    {s['expired_subs']}\n\n"
+        f"⏳  <b>Pending Payments</b>         {s['pending']}\n"
+        f"✔️  <b>Approved Orders</b>          {s['approved_orders']}\n"
+        f"✖️  <b>Rejected Orders</b>          {s['rejected_orders']}\n"
+        "━━━━━━━━━━━━━━━━━━━━━",
         reply_markup=admin_panel_keyboard(),
     )
 
