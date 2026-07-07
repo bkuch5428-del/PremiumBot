@@ -19,6 +19,7 @@ import logging
 from aiogram import Router, Bot, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
+from aiogram.exceptions import TelegramForbiddenError
 
 from config import ADMIN_IDS, SOURCE_CHANNEL_ID
 import handlers.settings as _settings_module  # for cross-module state clearing
@@ -255,7 +256,7 @@ async def handle_broadcast_msg(message: Message, bot: Bot) -> None:
     _state.pop(message.from_user.id, None)
 
     user_ids = await get_all_user_ids()
-    sent = failed = 0
+    sent = failed = blocked = 0
 
     status_msg = await message.answer(
         f"📢 Broadcasting to {len(user_ids)} users… please wait."
@@ -278,14 +279,17 @@ async def handle_broadcast_msg(message: Message, bot: Bot) -> None:
             else:
                 await bot.send_message(chat_id=uid, text=message.text or "")
             sent += 1
+        except TelegramForbiddenError:
+            blocked += 1
         except Exception:
             failed += 1
         await asyncio.sleep(0.05)  # ~20 msg/s to stay under rate limits
 
     await status_msg.edit_text(
-        f"📢 <b>Broadcast complete</b>\n\n"
-        f"✅ Sent: {sent}\n"
-        f"❌ Failed: {failed}"
+        "📢 <b>Broadcast Completed</b>\n\n"
+        f"✅ <b>Successfully Sent:</b>  {sent}\n"
+        f"❌ <b>Failed:</b>            {failed}\n"
+        f"🚫 <b>Blocked Users:</b>     {blocked}"
     )
     await message.answer("🛠 <b>ADMIN PANEL</b>\n\nSelect an option:", reply_markup=admin_panel_keyboard())
 
