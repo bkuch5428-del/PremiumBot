@@ -11,6 +11,7 @@ Steps:
 Use /cancel to exit at any time.
 """
 
+import html
 import logging
 
 from aiogram import Router, Bot, F
@@ -55,10 +56,10 @@ async def cb_settings_panel(call: CallbackQuery) -> None:
     _state.pop(call.from_user.id, None)
 
     cfg = await get_all_settings()
-    welcome_preview = (cfg.get("welcome_message") or "")[:60].replace("\n", " ")
-    payment_preview = (cfg.get("payment_message") or "")[:60].replace("\n", " ")
+    welcome_preview = html.escape((cfg.get("welcome_message") or "")[:60].replace("\n", " "))
+    payment_preview = html.escape((cfg.get("payment_message") or "")[:60].replace("\n", " "))
     qr_val          = cfg.get("qr_image", "")
-    support_val     = cfg.get("support_group_url", "")
+    support_val     = html.escape(cfg.get("support_group_url", ""))
 
     text = (
         "⚙️ <b>Settings</b>\n\n"
@@ -124,7 +125,7 @@ async def cb_settings_welcome(call: CallbackQuery) -> None:
     await call.message.answer(
         "📝 <b>Welcome Message</b>\n\n"
         "<b>Current message:</b>\n"
-        f"{current or '(not set)'}\n\n"
+        f"{html.escape(current) if current else '(not set)'}\n\n"
         "Send the new welcome message.\n"
         "HTML formatting is supported.",
         reply_markup=settings_cancel_keyboard(),
@@ -158,7 +159,7 @@ async def cb_settings_payment(call: CallbackQuery) -> None:
     await call.message.answer(
         "💳 <b>Payment Message</b>\n\n"
         "<b>Current message:</b>\n"
-        f"{current or '(not set)'}\n\n"
+        f"{html.escape(current) if current else '(not set)'}\n\n"
         "Send the new payment instructions.\n\n"
         "You can use these placeholders and they will be filled in automatically:\n"
         "<code>{plan_name}</code>  <code>{plan_price}</code>  "
@@ -250,7 +251,7 @@ async def cb_settings_support(call: CallbackQuery) -> None:
     current = await get_setting("support_group_url")
     await call.message.answer(
         "👥 <b>Support Group</b>\n\n"
-        f"<b>Current link:</b> {current or '(using env default)'}\n\n"
+        f"<b>Current link:</b> {html.escape(current) if current else '(using env default)'}\n\n"
         "Send the new support group link (e.g. https://t.me/+xxxxx):",
         reply_markup=settings_cancel_keyboard(),
     )
