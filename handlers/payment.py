@@ -2,15 +2,11 @@
 handlers/payment.py — Buy Now flow.
 
 Sequence:
-  1. callback_buy         → generate order, send QR + payment details message
+  1. callback_buy         → load plan from DB, generate order, show payment details
   2. callback_i_have_paid → ask user to send screenshot or UTR
   3. handle_payment_proof → accept photo/text, forward to review channel, confirm
   4. cancel callbacks     → cancel order, return to main menu
-
-State while awaiting proof is kept in the module-level dict _awaiting_proof
-(user_id -> order_id).  This requires no FSM storage changes in main.py.
-To add Approve / Reject logic later, add handlers here that act on order_id
-forwarded from the review channel.
+  5. approve / reject     → admin buttons in review channel
 """
 
 import logging
@@ -20,21 +16,14 @@ from datetime import datetime, timezone, timedelta
 from aiogram import Router, Bot, F
 from aiogram.types import Message, CallbackQuery
 
-from config import (
-    QR_IMAGE_URL,
-    PAYMENT_REVIEW_CHANNEL_ID,
-    PLAN_NAME,
-    PLAN_PRICE,
-    PLAN_VALIDITY,
-    PUBLIC_CHANNEL_URL,
-)
-from database import create_order, update_order_status, approve_order
+from config import QR_IMAGE_URL, PAYMENT_REVIEW_CHANNEL_ID, ADMIN_IDS
+from database import create_order, update_order_status, approve_order, get_plan, get_all_plans
 from keyboards.menu import (
     payment_details_keyboard,
     await_proof_keyboard,
     main_menu_keyboard,
     approve_reject_keyboard,
-    product_keyboard,
+    plans_list_keyboard,
 )
 from handlers.log_channel import log_payment_started
 
@@ -44,14 +33,15 @@ router = Router()
 
 _IST = timezone(timedelta(hours=5, minutes=30))
 
-# user_id -> order_id while we are waiting for the user to send proof.
-_awaiting_proof: dict[int, str] = {}
+# user_id -> { order_id, plan_name, plan_price, plan_validity, access_link }
+_awaiting_proof: dict[int, dict] = {}
+
+_PRODUCT_TEXT = "Hello, {first_name} 👋\n\nChoose a plan to get started 💫"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_order_id() -> str:
-    # 6-digit suffix → 900 000 possible values, low collision probability.
     return f"A{random.randint(100000, 999999)}"
 
 
@@ -59,28 +49,41 @@ def _now_ist() -> str:
     return datetime.now(_IST).strftime("%Y-%m-%d %H:%M:%S IST")
 
 
-_PRODUCT_TEXT = (
-    "Hello, {first_name} 👋\n\n"
-    "Choose a plan to get started 💋"
-)
+# ── Buy Now (buy:{plan_id}) ───────────────────────────────────────────────────
 
-
-# ── Buy Now ───────────────────────────────────────────────────────────────────
-
-@router.callback_query(lambda c: c.data == "buy")
+@router.callback_query(lambda c: c.data and c.data.startswith("buy:"))
 async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
-    """User tapped Buy Now — generate an order and show payment details."""
+    """User tapped Buy Now — load plan from DB, generate order, show payment details."""
     await call.answer()
 
-    user = call.from_user
-    await log_payment_started(bot, user.id, user.first_name)
+    try:
+        plan_id = int(call.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await call.message.answer("⚠️ Invalid plan. Please try again.")
+        return
 
-    # Retry up to 5 times in the unlikely event of a PK collision.
+    plan = await get_plan(plan_id)
+    if not plan:
+        await call.message.answer("⚠️ Plan not found. It may have been removed.")
+        return
+
+    user = call.from_user
+    await log_payment_started(bot, user.id, user.first_name, plan_title=plan["name"])
+
+    # Retry up to 5 times on PK collision
     order_id: str | None = None
     for _ in range(5):
         candidate = _make_order_id()
         try:
-            await create_order(user.id, PLAN_NAME, PLAN_PRICE, PLAN_VALIDITY, candidate)
+            await create_order(
+                user_id=user.id,
+                plan_name=plan["name"],
+                plan_price=plan["price"],
+                plan_validity=plan["validity"],
+                order_id=candidate,
+                plan_id=plan_id,
+                access_link=plan["access_link"],
+            )
             order_id = candidate
             break
         except Exception as exc:
@@ -88,49 +91,51 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
                 logger.warning("Order ID collision on %s — retrying", candidate)
                 continue
             logger.exception("Failed to create order for user %s", user.id)
-            await call.message.answer(
-                "⚠️ Something went wrong. Please try again in a moment."
-            )
+            await call.message.answer("⚠️ Something went wrong. Please try again.")
             return
 
     if order_id is None:
-        logger.error("Could not generate a unique order ID for user %s", user.id)
-        await call.message.answer(
-            "⚠️ Something went wrong. Please try again in a moment."
-        )
+        await call.message.answer("⚠️ Could not generate order. Please try again.")
         return
 
     payment_msg = (
         f"💳 <b>Payment Details</b>\n\n"
-        f"📦 <b>Plan:</b> {PLAN_NAME}\n"
-        f"💰 <b>Amount:</b> ₹{PLAN_PRICE}\n"
-        f"⌛ <b>Validity:</b> {PLAN_VALIDITY}\n\n"
+        f"📦 <b>Plan:</b> {plan['name']}\n"
+        f"💰 <b>Amount:</b> ₹{plan['price']}\n"
+        f"⌛ <b>Validity:</b> {plan['validity']}\n\n"
         f"📲 Scan the QR code above using any UPI app.\n\n"
-        f"✓ Pay ₹{PLAN_PRICE} to the UPI ID above.\n"
+        f"✓ Pay ₹{plan['price']} to the UPI ID shown.\n"
         f"✓ After payment, click <b>✅ I Have Paid</b>\n\n"
         f"🆔 <b>Order:</b> #{order_id}"
     )
 
     if QR_IMAGE_URL:
-        await bot.send_photo(
-            chat_id=call.message.chat.id,
-            photo=QR_IMAGE_URL,
-        )
+        await bot.send_photo(chat_id=call.message.chat.id, photo=QR_IMAGE_URL)
 
-    await call.message.answer(
-        payment_msg,
-        reply_markup=payment_details_keyboard(order_id),
-    )
+    await call.message.answer(payment_msg, reply_markup=payment_details_keyboard(order_id))
+
+    # Store plan context for proof handler
+    _awaiting_proof[user.id] = {
+        "order_id":     order_id,
+        "plan_name":    plan["name"],
+        "plan_price":   plan["price"],
+        "plan_validity": plan["validity"],
+        "access_link":  plan["access_link"],
+    }
 
 
 # ── I Have Paid ───────────────────────────────────────────────────────────────
 
 @router.callback_query(lambda c: c.data and c.data.startswith("paid:"))
 async def callback_i_have_paid(call: CallbackQuery) -> None:
-    """User tapped I Have Paid — ask for screenshot or UTR."""
     await call.answer()
     order_id = call.data.split(":", 1)[1]
-    _awaiting_proof[call.from_user.id] = order_id
+
+    # Ensure state is current (user may have come from the payment details message)
+    if call.from_user.id not in _awaiting_proof:
+        _awaiting_proof[call.from_user.id] = {"order_id": order_id}
+    else:
+        _awaiting_proof[call.from_user.id]["order_id"] = order_id
 
     await call.message.answer(
         "✅ <b>Great!</b>\n\n"
@@ -145,15 +150,16 @@ async def callback_i_have_paid(call: CallbackQuery) -> None:
 
 @router.callback_query(lambda c: c.data and c.data.startswith("cancel_order:"))
 async def callback_cancel_order(call: CallbackQuery) -> None:
-    """User cancelled before paying — mark order cancelled, go to main menu."""
     await call.answer()
     order_id = call.data.split(":", 1)[1]
     await update_order_status(order_id, "cancelled")
     _awaiting_proof.pop(call.from_user.id, None)
 
+    plans = await get_all_plans()
+    from keyboards.menu import plans_list_keyboard
     await call.message.answer(
         _PRODUCT_TEXT.format(first_name=call.from_user.first_name),
-        reply_markup=product_keyboard(),
+        reply_markup=plans_list_keyboard(plans) if plans else main_menu_keyboard(),
     )
 
 
@@ -161,27 +167,16 @@ async def callback_cancel_order(call: CallbackQuery) -> None:
 
 @router.callback_query(lambda c: c.data == "cancel_proof")
 async def callback_cancel_proof(call: CallbackQuery) -> None:
-    """User cancelled while we were waiting for proof — cancel order, go to main menu."""
     await call.answer()
-    order_id = _awaiting_proof.pop(call.from_user.id, None)
-    if order_id:
-        await update_order_status(order_id, "cancelled")
+    info = _awaiting_proof.pop(call.from_user.id, None)
+    if info:
+        await update_order_status(info["order_id"], "cancelled")
 
+    plans = await get_all_plans()
+    from keyboards.menu import plans_list_keyboard
     await call.message.answer(
         _PRODUCT_TEXT.format(first_name=call.from_user.first_name),
-        reply_markup=product_keyboard(),
-    )
-
-
-# ── Main Menu (from submission confirmation screen) ───────────────────────────
-
-@router.callback_query(lambda c: c.data == "main_menu")
-async def callback_main_menu(call: CallbackQuery) -> None:
-    """User tapped Main Menu from confirmation screen."""
-    await call.answer()
-    await call.message.answer(
-        _PRODUCT_TEXT.format(first_name=call.from_user.first_name),
-        reply_markup=product_keyboard(),
+        reply_markup=plans_list_keyboard(plans) if plans else main_menu_keyboard(),
     )
 
 
@@ -193,20 +188,17 @@ async def _user_is_awaiting_proof(message: Message) -> bool:
 
 @router.message(_user_is_awaiting_proof, F.photo | F.text)
 async def handle_payment_proof(message: Message, bot: Bot) -> None:
-    """
-    Fires only for users in _awaiting_proof.
-    Accepts a screenshot (photo) or a UTR / transaction ID (text).
-    Forwards the proof to PAYMENT_REVIEW_CHANNEL_ID with full order details,
-    then confirms to the user.
-    """
-    # Ignore commands — let command handlers deal with them.
     if message.text and message.text.startswith("/"):
         return
 
     user = message.from_user
-    order_id = _awaiting_proof.pop(user.id, None)
-    if not order_id:
+    info = _awaiting_proof.pop(user.id, None)
+    if not info:
         return
+
+    order_id = info["order_id"]
+    plan_name = info.get("plan_name", "—")
+    plan_price = info.get("plan_price", "—")
 
     await update_order_status(order_id, "pending")
 
@@ -216,12 +208,11 @@ async def handle_payment_proof(message: Message, bot: Bot) -> None:
         f"👤 Name: {user.first_name}\n"
         f"📛 Username: {username}\n"
         f"🆔 User ID: <code>{user.id}</code>\n"
-        f"📦 Plan: {PLAN_NAME}\n"
-        f"💰 Amount: ₹{PLAN_PRICE}\n"
+        f"📦 Plan: {plan_name}\n"
+        f"💰 Amount: ₹{plan_price}\n"
         f"🕒 Time: {_now_ist()}"
     )
 
-    # Forward proof to the admin review channel with Approve / Reject buttons.
     try:
         if PAYMENT_REVIEW_CHANNEL_ID:
             kb = approve_reject_keyboard(order_id)
@@ -243,7 +234,6 @@ async def handle_payment_proof(message: Message, bot: Bot) -> None:
     except Exception:
         logger.exception("Failed to forward payment proof to review channel")
 
-    # Confirm to the user.
     await message.answer(
         f"✅ <b>Request Submitted!</b>\n\n"
         f"🆔 Order #{order_id}\n\n"
@@ -257,13 +247,8 @@ async def handle_payment_proof(message: Message, bot: Bot) -> None:
 
 @router.callback_query(lambda c: c.data and c.data.startswith("approve:"))
 async def callback_approve(call: CallbackQuery, bot: Bot) -> None:
-    """
-    Admin clicked ✅ Approve in the review channel.
-    Updates the order, notifies the user, removes buttons from the review message.
-    Only processes callbacks that originate from PAYMENT_REVIEW_CHANNEL_ID.
-    """
-    # Guard: only honour clicks that came from the review channel itself.
-    if call.message.chat.id != PAYMENT_REVIEW_CHANNEL_ID:
+    # Fail-closed: both conditions must pass regardless of whether ADMIN_IDS is configured.
+    if call.message.chat.id != PAYMENT_REVIEW_CHANNEL_ID or call.from_user.id not in ADMIN_IDS:
         await call.answer("⛔ Unauthorized.", show_alert=True)
         return
 
@@ -275,55 +260,70 @@ async def callback_approve(call: CallbackQuery, bot: Bot) -> None:
 
     await call.answer("✅ Approved!")
 
-    # Convert UTC subscription_end to IST for display.
     sub_end_ist = result["subscription_end"].astimezone(_IST)
     expiry_str = sub_end_ist.strftime("%d %b %Y")
 
-    # Notify the user.
+    access_link = result.get("access_link", "")
+
     try:
+        activation_text = (
+            "🎉 <b>Plan Activated!</b>\n\n"
+            f"📦 <b>Plan:</b> {result['plan_name']}\n"
+            f"⏳ <b>Validity:</b> {result['plan_validity']}\n"
+            f"📅 <b>Expires:</b> {expiry_str}\n\n"
+        )
+        if access_link:
+            activation_text += f"🔗 <b>Access Link:</b>\n{access_link}\n\n"
+        activation_text += "Thank you for your purchase! ❤️"
+
         await bot.send_message(
             chat_id=result["user_id"],
-            text=(
-                "🎉 <b>Plan Activated!</b>\n\n"
-                f"📦 <b>Plan:</b> {result['plan_name']}\n"
-                f"⏳ <b>Validity:</b> {result['plan_validity']}\n"
-                f"📅 <b>Expires:</b> {expiry_str}\n\n"
-                f"🔗 <b>Your Public Channel:</b>\n"
-                f"{PUBLIC_CHANNEL_URL}\n\n"
-                "Thank you for your purchase! ❤️"
-            ),
+            text=activation_text,
             reply_markup=main_menu_keyboard(),
         )
     except Exception:
         logger.exception("Failed to notify user %s of approval", result["user_id"])
 
-    # Remove the Approve/Reject buttons from the review channel message.
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
-        pass  # message may already be edited or too old
+        pass
 
 
-# ── Admin: Reject (structure ready for next update) ───────────────────────────
+# ── Admin: Reject ─────────────────────────────────────────────────────────────
 
 @router.callback_query(lambda c: c.data and c.data.startswith("reject:"))
-async def callback_reject(call: CallbackQuery) -> None:
-    """
-    Admin clicked ❌ Reject in the review channel.
-    Full rejection logic (user notification, refund instructions) to be added
-    in the next update.  Buttons are removed so the order is not double-actioned.
-    Only processes callbacks that originate from PAYMENT_REVIEW_CHANNEL_ID.
-    """
-    # Guard: only honour clicks that came from the review channel itself.
-    if call.message.chat.id != PAYMENT_REVIEW_CHANNEL_ID:
+async def callback_reject(call: CallbackQuery, bot: Bot) -> None:
+    # Fail-closed: both conditions must pass regardless of whether ADMIN_IDS is configured.
+    if call.message.chat.id != PAYMENT_REVIEW_CHANNEL_ID or call.from_user.id not in ADMIN_IDS:
         await call.answer("⛔ Unauthorized.", show_alert=True)
         return
 
     order_id = call.data.split(":", 1)[1]
     await update_order_status(order_id, "rejected")
-    await call.answer("❌ Rejected. Full logic coming in next update.", show_alert=True)
+    await call.answer("❌ Payment rejected.", show_alert=True)
 
-    # Remove buttons from the review message.
+    # Notify the user about rejection
+    try:
+        # Fetch user_id from review message caption
+        caption = call.message.caption or call.message.text or ""
+        uid_line = next((l for l in caption.splitlines() if "User ID:" in l), None)
+        if uid_line:
+            # "🆔 User ID: 123456" or with code tags
+            uid_str = uid_line.split(":")[-1].strip().strip("<code>").strip("</code>")
+            user_id = int(uid_str)
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "❌ <b>Payment Rejected</b>\n\n"
+                    f"🆔 Order #{order_id}\n\n"
+                    "Your payment could not be verified. Please contact support if you believe this is an error."
+                ),
+                reply_markup=main_menu_keyboard(),
+            )
+    except Exception:
+        logger.exception("Failed to notify user of rejection for order %s", order_id)
+
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:

@@ -5,9 +5,8 @@ from aiogram import Router, Bot
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 
-from config import SOURCE_CHANNEL_ID, DEMO_MESSAGE_IDS
-from database import save_user
-from keyboards.menu import product_keyboard, plan_keyboard, PLAN_BUTTON_TEXT
+from database import save_user, get_all_plans, get_plan
+from keyboards.menu import plans_list_keyboard, plan_detail_keyboard, product_keyboard, main_menu_keyboard
 from handlers.log_channel import log_new_user, log_plan_selected
 
 logger = logging.getLogger(__name__)
@@ -17,86 +16,67 @@ router = Router()
 # ── Static texts ──────────────────────────────────────────────────────────────
 
 WELCOME_TEXT = (
-    "🎉 <b>Welcome to Premium Leaks Robot!</b>\n\n"
+    "🎉 <b>Welcome to Premium Bot!</b>\n\n"
     "✨ Get exclusive access to premium content\n"
-    "💰 Affordable plans starting at just ₹99\n"
-    "✨ Content quality aisi ki dekhi nahi hogi\n"
-    "✨ Only Premium Content\n"
+    "💰 Affordable plans available\n"
     "✨ Daily New Uploads\n"
-    "✨ C!p!, R!p!, Indi@n, Fore!gn, D@rk everything\n"
-    "✨ 10000+ C!p! videos\n"
-    "✨  25000+ R!p! videos\n"
-    "✨  M0m $0n 5k Videos\n\n"
-    "✨ <b>TRY OUR ANY PLAN FOR CHECKING THE QUALITY</b> ✨"
+    "✨ High Quality Content\n\n"
+    "✨ <b>SELECT A PLAN TO GET STARTED</b> ✨"
 )
 
-PRODUCT_TEXT = (
-    "Hello, {first_name} 👋\n\n"
-    "Choose a plan to get started 💋"
-)
+PRODUCT_TEXT = "Hello, {first_name} 👋\n\nChoose a plan to get started 💫"
 
-PLAN_TEXT = (
-    "💦 Full Desi Indian content approx 40000+ videos💦\n\n"
-    "🫦Buy now to get access🫦\n\n"
-    "📦 💦 𝐑𝐞𝐚𝐥 𝐈𝐧𝐝!𝐚𝐧 𝐃ē𝐬𝐢 𝐏𝟎𝐫𝐧 🫦\n"
-    "💰 Price: ₹49 | ⏳ 30 Days"
+NO_PLANS_TEXT = (
+    "⚠️ No plans are available right now.\n\n"
+    "Please check back later or contact support."
 )
-
 
 
 # ── Demo video sender ─────────────────────────────────────────────────────────
 
-async def send_demo_videos(bot: Bot, chat_id: int) -> None:
+async def send_demo_videos(bot: Bot, chat_id: int, plan: dict) -> None:
     """
-    Copy demo messages from the private channel to the user as a single album.
-
-    Uses copy_messages() (Bot API 7.0 / aiogram 3.4+) which copies all
-    message IDs in one call and re-groups them as an album when the originals
-    were part of a media group. Falls back to individual copy_message() calls
-    if the batch call fails for any reason.
+    Copy demo messages from the plan's source channel to the user.
+    Stores only message IDs — no media is downloaded locally.
     """
-    print("SOURCE_CHANNEL_ID:", SOURCE_CHANNEL_ID)
-    print("DEMO_MESSAGE_IDS:", DEMO_MESSAGE_IDS)
+    source = plan.get("source_channel_id", "")
+    msg_ids = plan.get("demo_message_ids", [])
 
-    if not SOURCE_CHANNEL_ID:
-        print("SOURCE_CHANNEL_ID not set, skipping demo video")
-        logger.warning("SOURCE_CHANNEL_ID is not set — skipping demo videos.")
+    if not source or not msg_ids:
+        logger.warning("Plan id=%s has no demo videos configured.", plan.get("id"))
         return
 
-    # ── Primary: send as a single album ──────────────────────────────────────
+    # Primary: batch copy as album
     try:
         await bot.copy_messages(
             chat_id=chat_id,
-            from_chat_id=SOURCE_CHANNEL_ID,
-            message_ids=DEMO_MESSAGE_IDS,
+            from_chat_id=source,
+            message_ids=msg_ids,
         )
         return
     except Exception:
         logger.exception("copy_messages() failed — falling back to individual sends")
 
-    # ── Fallback: send one by one ─────────────────────────────────────────────
-    for message_id in DEMO_MESSAGE_IDS:
+    # Fallback: one-by-one
+    for message_id in msg_ids:
         try:
             await bot.copy_message(
                 chat_id=chat_id,
-                from_chat_id=SOURCE_CHANNEL_ID,
+                from_chat_id=source,
                 message_id=message_id,
             )
         except Exception:
             logger.exception(
-                "Failed to copy message %s from channel %s",
-                message_id,
-                SOURCE_CHANNEL_ID,
+                "Failed to copy message %s from channel %s", message_id, source
             )
         await asyncio.sleep(0.25)
 
 
-# ── Handlers ──────────────────────────────────────────────────────────────────
+# ── /start ────────────────────────────────────────────────────────────────────
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, bot: Bot) -> None:
-    print("Received command: /start")
-    logger.info("Received command: /start from user %s", message.from_user.id)
+    logger.info("/start from user %s", message.from_user.id)
     user = message.from_user
 
     try:
@@ -108,30 +88,98 @@ async def cmd_start(message: Message, bot: Bot) -> None:
     if is_new:
         await log_new_user(bot, user.id, user.first_name, user.username)
 
-    await send_demo_videos(bot, message.chat.id)
+    plans = await get_all_plans()
+
+    if not plans:
+        await message.answer(WELCOME_TEXT)
+        await message.answer(NO_PLANS_TEXT)
+        return
+
+    # Send demo videos from the first plan
+    await send_demo_videos(bot, message.chat.id, plans[0])
     await message.answer(WELCOME_TEXT)
     await message.answer(
         PRODUCT_TEXT.format(first_name=user.first_name),
-        reply_markup=product_keyboard(),
+        reply_markup=plans_list_keyboard(plans),
     )
 
 
-@router.callback_query(lambda c: c.data == "plan")
-async def callback_plan(call: CallbackQuery, bot: Bot) -> None:
-    """User tapped the plan button — send demo videos then plan details."""
-    await call.answer()
-    await log_plan_selected(bot, call.from_user.id, call.from_user.first_name)
-    await send_demo_videos(bot, call.message.chat.id)
-    await call.message.answer(PLAN_TEXT, reply_markup=plan_keyboard())
+# ── Show plans (from "View Plans" button fallback) ────────────────────────────
 
+@router.callback_query(lambda c: c.data == "show_plans")
+async def cb_show_plans(call: CallbackQuery, bot: Bot) -> None:
+    await call.answer()
+    plans = await get_all_plans()
+    if not plans:
+        await call.message.answer(NO_PLANS_TEXT)
+        return
+    await call.message.answer(
+        PRODUCT_TEXT.format(first_name=call.from_user.first_name),
+        reply_markup=plans_list_keyboard(plans),
+    )
+
+
+# ── Plan selected (plan:{plan_id}) ────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data and c.data.startswith("plan:"))
+async def callback_plan(call: CallbackQuery, bot: Bot) -> None:
+    """User tapped a plan button — send demo videos then plan detail."""
+    await call.answer()
+    try:
+        plan_id = int(call.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await call.message.answer("⚠️ Invalid plan. Please try again.")
+        return
+
+    plan = await get_plan(plan_id)
+    if not plan:
+        await call.message.answer("⚠️ Plan not found. It may have been removed.")
+        return
+
+    await log_plan_selected(
+        bot,
+        call.from_user.id,
+        call.from_user.first_name,
+        plan_title=plan["name"],
+        price=f"₹{plan['price']} / {plan['validity']}",
+    )
+
+    await send_demo_videos(bot, call.message.chat.id, plan)
+
+    plan_text = (
+        f"📦 <b>{plan['name']}</b>\n\n"
+        f"💰 <b>Price:</b> ₹{plan['price']}\n"
+        f"⏳ <b>Validity:</b> {plan['validity']}\n\n"
+        "Tap <b>Buy Now</b> to proceed with payment."
+    )
+    await call.message.answer(plan_text, reply_markup=plan_detail_keyboard(plan_id))
+
+
+# ── Back to plan list ─────────────────────────────────────────────────────────
 
 @router.callback_query(lambda c: c.data == "back")
 async def callback_back(call: CallbackQuery) -> None:
-    """User tapped Back — return to product screen."""
     await call.answer()
+    plans = await get_all_plans()
+    if not plans:
+        await call.message.answer(NO_PLANS_TEXT)
+        return
     await call.message.answer(
         PRODUCT_TEXT.format(first_name=call.from_user.first_name),
-        reply_markup=product_keyboard(),
+        reply_markup=plans_list_keyboard(plans),
     )
 
 
+# ── Main menu ─────────────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "main_menu")
+async def callback_main_menu(call: CallbackQuery) -> None:
+    await call.answer()
+    plans = await get_all_plans()
+    if not plans:
+        await call.message.answer(NO_PLANS_TEXT)
+        return
+    await call.message.answer(
+        PRODUCT_TEXT.format(first_name=call.from_user.first_name),
+        reply_markup=plans_list_keyboard(plans),
+    )

@@ -14,6 +14,7 @@ from database import init_db
 from handlers import commands
 from handlers import start
 from handlers import payment
+from handlers import admin
 
 logging.basicConfig(level=logging.INFO)
 
@@ -40,6 +41,7 @@ BOT_COMMANDS = [
     BotCommand(command="status",  description="Check your subscription status"),
     BotCommand(command="help",    description="Help & usage guide"),
     BotCommand(command="contact", description="Contact support"),
+    BotCommand(command="admin",   description="Admin panel (admins only)"),
 ]
 
 
@@ -48,15 +50,16 @@ async def main() -> None:
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
-    # Drop any pending webhook or stale session left by another instance
-    # so this instance becomes the sole update consumer immediately.
     await bot.delete_webhook(drop_pending_updates=True)
 
     dp = Dispatcher()
 
     # Registration order matters for filter priority:
-    # commands first (Command() filters), then payment (includes a broad
-    # message filter for proof collection), then start (catch-all callbacks).
+    # admin first (catches /admin and all admin_ callbacks),
+    # then commands (/plans, /status, /help, /contact),
+    # then payment (buy:, paid:, approve:, reject:, cancel_*),
+    # then start (catch-all plan:, back, show_plans, main_menu).
+    dp.include_router(admin.router)
     dp.include_router(commands.router)
     dp.include_router(payment.router)
     dp.include_router(start.router)
@@ -69,7 +72,6 @@ async def main() -> None:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # Flask runs in a background daemon thread so it never blocks the bot.
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
