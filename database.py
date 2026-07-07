@@ -8,6 +8,28 @@ logger = logging.getLogger(__name__)
 
 DB_PATH = "users.db"
 
+# ── Settings defaults (seeded once; admin can change via /admin → Settings) ───
+
+_DEFAULT_WELCOME = (
+    "🎉 <b>Welcome to Premium Bot!</b>\n\n"
+    "✨ Get exclusive access to premium content\n"
+    "💰 Affordable plans available\n"
+    "✨ Daily New Uploads\n"
+    "✨ High Quality Content\n\n"
+    "✨ <b>SELECT A PLAN TO GET STARTED</b> ✨"
+)
+
+_DEFAULT_PAYMENT = (
+    "💳 <b>Payment Details</b>\n\n"
+    "📦 <b>Plan:</b> {plan_name}\n"
+    "💰 <b>Amount:</b> ₹{plan_price}\n"
+    "⌛ <b>Validity:</b> {plan_validity}\n\n"
+    "📲 Scan the QR code above using any UPI app.\n\n"
+    "✓ Pay ₹{plan_price} to the UPI ID shown.\n"
+    "✓ After payment, click <b>✅ I Have Paid</b>\n\n"
+    "🆔 <b>Order:</b> #{order_id}"
+)
+
 
 # ── Schema initialisation ─────────────────────────────────────────────────────
 
@@ -67,6 +89,29 @@ async def init_db() -> None:
                 await db.execute(f"ALTER TABLE orders ADD COLUMN {col_def}")
             except Exception:
                 pass  # column already exists — safe to ignore
+
+        # Settings (key-value store for admin-editable bot config)
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+
+        # Seed default values — INSERT OR IGNORE so existing values are never overwritten
+        _defaults = [
+            ("welcome_message", _DEFAULT_WELCOME),
+            ("payment_message", _DEFAULT_PAYMENT),
+            ("qr_image",        ""),   # falls back to QR_IMAGE_URL env var when empty
+            ("support_group_url", ""), # falls back to SUPPORT_GROUP_URL env var when empty
+        ]
+        for _k, _v in _defaults:
+            await db.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+                (_k, _v),
+            )
 
         await db.commit()
     logger.info("Database initialised at %s", DB_PATH)
@@ -304,6 +349,38 @@ async def get_user_active_subscription(user_id: int) -> dict | None:
         )
         row = await cursor.fetchone()
     return dict(row) if row else None
+
+
+# ── Settings ─────────────────────────────────────────────────────────────────
+
+async def get_setting(key: str, default: str = "") -> str:
+    """Return the value for a settings key, or default if not found."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        )
+        row = await cursor.fetchone()
+    return row[0] if row else default
+
+
+async def set_setting(key: str, value: str) -> None:
+    """Upsert a settings key-value pair."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        await db.commit()
+    logger.info("Setting %r updated", key)
+
+
+async def get_all_settings() -> dict[str, str]:
+    """Return all settings as a plain dict."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT key, value FROM settings")
+        rows = await cursor.fetchall()
+    return {r[0]: r[1] for r in rows}
 
 
 # ── Statistics ────────────────────────────────────────────────────────────────

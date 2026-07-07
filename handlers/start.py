@@ -5,7 +5,7 @@ from aiogram import Router, Bot
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 
-from database import save_user, get_all_plans, get_plan
+from database import save_user, get_all_plans, get_plan, get_setting
 from keyboards.menu import plans_list_keyboard, plan_detail_keyboard, product_keyboard, main_menu_keyboard
 from handlers.log_channel import log_new_user, log_plan_selected
 
@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-# ── Static texts ──────────────────────────────────────────────────────────────
+# ── Fallback texts (used only when DB setting is empty) ───────────────────────
 
-WELCOME_TEXT = (
+_DEFAULT_WELCOME = (
     "🎉 <b>Welcome to Premium Bot!</b>\n\n"
     "✨ Get exclusive access to premium content\n"
     "💰 Affordable plans available\n"
@@ -91,13 +91,15 @@ async def cmd_start(message: Message, bot: Bot) -> None:
     plans = await get_all_plans()
 
     if not plans:
-        await message.answer(WELCOME_TEXT)
+        welcome_text = (await get_setting("welcome_message")) or _DEFAULT_WELCOME
+        await message.answer(welcome_text)
         await message.answer(NO_PLANS_TEXT)
         return
 
     # Send demo videos from the first plan
     await send_demo_videos(bot, message.chat.id, plans[0])
-    await message.answer(WELCOME_TEXT)
+    welcome_text = (await get_setting("welcome_message")) or _DEFAULT_WELCOME
+    await message.answer(welcome_text)
     await message.answer(
         PRODUCT_TEXT.format(first_name=user.first_name),
         reply_markup=plans_list_keyboard(plans),

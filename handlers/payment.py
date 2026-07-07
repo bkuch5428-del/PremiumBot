@@ -17,7 +17,7 @@ from aiogram import Router, Bot, F
 from aiogram.types import Message, CallbackQuery
 
 from config import QR_IMAGE_URL, PAYMENT_REVIEW_CHANNEL_ID, ADMIN_IDS
-from database import create_order, update_order_status, approve_order, get_plan, get_all_plans
+from database import create_order, update_order_status, approve_order, get_plan, get_all_plans, get_setting
 from keyboards.menu import (
     payment_details_keyboard,
     await_proof_keyboard,
@@ -98,19 +98,38 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         await call.message.answer("⚠️ Could not generate order. Please try again.")
         return
 
-    payment_msg = (
-        f"💳 <b>Payment Details</b>\n\n"
-        f"📦 <b>Plan:</b> {plan['name']}\n"
-        f"💰 <b>Amount:</b> ₹{plan['price']}\n"
-        f"⌛ <b>Validity:</b> {plan['validity']}\n\n"
-        f"📲 Scan the QR code above using any UPI app.\n\n"
-        f"✓ Pay ₹{plan['price']} to the UPI ID shown.\n"
-        f"✓ After payment, click <b>✅ I Have Paid</b>\n\n"
-        f"🆔 <b>Order:</b> #{order_id}"
+    # Payment message: use DB setting, fall back to built-in default template
+    _default_tpl = (
+        "💳 <b>Payment Details</b>\n\n"
+        "📦 <b>Plan:</b> {plan_name}\n"
+        "💰 <b>Amount:</b> ₹{plan_price}\n"
+        "⌛ <b>Validity:</b> {plan_validity}\n\n"
+        "📲 Scan the QR code above using any UPI app.\n\n"
+        "✓ Pay ₹{plan_price} to the UPI ID shown.\n"
+        "✓ After payment, click <b>✅ I Have Paid</b>\n\n"
+        "🆔 <b>Order:</b> #{order_id}"
     )
+    payment_tpl = (await get_setting("payment_message")) or _default_tpl
+    _fmt_kwargs = dict(
+        plan_name=plan["name"],
+        plan_price=plan["price"],
+        plan_validity=plan["validity"],
+        order_id=order_id,
+    )
+    try:
+        payment_msg = payment_tpl.format(**_fmt_kwargs)
+    except (KeyError, ValueError, IndexError):
+        # Admin entered a malformed template — fall back to built-in default
+        logger.warning("payment_message template is malformed — using default")
+        payment_msg = _default_tpl.format(**_fmt_kwargs)
 
-    if QR_IMAGE_URL:
-        await bot.send_photo(chat_id=call.message.chat.id, photo=QR_IMAGE_URL)
+    # QR image: DB setting first (file_id), then env var URL, then skip
+    qr_image = (await get_setting("qr_image")) or QR_IMAGE_URL
+    if qr_image:
+        try:
+            await bot.send_photo(chat_id=call.message.chat.id, photo=qr_image)
+        except Exception:
+            logger.warning("Failed to send QR image — check the stored file_id or URL")
 
     await call.message.answer(payment_msg, reply_markup=payment_details_keyboard(order_id))
 

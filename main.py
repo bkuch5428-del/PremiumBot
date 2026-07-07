@@ -15,6 +15,7 @@ from handlers import commands
 from handlers import start
 from handlers import payment
 from handlers import admin
+from handlers import settings as settings_handler
 
 logging.basicConfig(level=logging.INFO)
 
@@ -60,6 +61,7 @@ async def main() -> None:
     # then payment (buy:, paid:, approve:, reject:, cancel_*),
     # then start (catch-all plan:, back, show_plans, main_menu).
     dp.include_router(admin.router)
+    dp.include_router(settings_handler.router)
     dp.include_router(commands.router)
     dp.include_router(payment.router)
     dp.include_router(start.router)

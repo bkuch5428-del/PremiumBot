@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from config import SUPPORT_GROUP_URL
-from database import get_all_plans, get_user_active_subscription
+from database import get_all_plans, get_user_active_subscription, get_setting
 from keyboards.menu import plan_detail_keyboard, plans_list_keyboard
 
 logger = logging.getLogger(__name__)
@@ -83,9 +83,11 @@ async def cmd_help(message: Message) -> None:
 @router.message(Command("contact", ignore_case=True))
 async def cmd_contact(message: Message) -> None:
     logger.info("/contact from user %s", message.from_user.id)
+    # DB setting takes priority; fall back to env var
+    support_url = (await get_setting("support_group_url")) or SUPPORT_GROUP_URL
     await message.answer(
         "📞 <b>Support</b>\n\n"
         "Need help?\n\n"
         "Join our official support group:\n\n"
-        f"{SUPPORT_GROUP_URL}"
+        f"{support_url}"
     )

@@ -11,6 +11,7 @@ A database-driven Telegram subscription bot built with **aiogram 3.x**, **aiosql
 | `database.py` | All DB access — users, plans, orders, stats |
 | `keyboards/menu.py` | All `InlineKeyboardMarkup` builders |
 | `handlers/admin.py` | `/admin` command + full admin panel wizard |
+| `handlers/settings.py` | ⚙️ Settings sub-panel (welcome, payment msg, QR, support) |
 | `handlers/commands.py` | `/plans`, `/status`, `/help`, `/contact` |
 | `handlers/start.py` | `/start`, plan selection, demo video delivery |
 | `handlers/payment.py` | Buy → proof → approve/reject flow |

@@ -21,6 +21,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 
 from config import ADMIN_IDS, SOURCE_CHANNEL_ID
+import handlers.settings as _settings_module  # for cross-module state clearing
 from database import (
     create_plan,
     get_all_plans,
@@ -124,10 +125,15 @@ async def cmd_admin(message: Message) -> None:
 async def cmd_cancel(message: Message) -> None:
     if not _is_admin(message.from_user.id):
         return  # not an admin — let other handlers deal with it
-    if message.from_user.id in _state:
-        _state.pop(message.from_user.id, None)
+    uid = message.from_user.id
+    # Clear state from both admin wizard AND settings panel
+    in_admin    = uid in _state
+    in_settings = uid in _settings_module._state
+    _state.pop(uid, None)
+    _settings_module._state.pop(uid, None)
+    if in_admin or in_settings:
         await message.answer(
-            "✅ Wizard cancelled.",
+            "✅ Cancelled.",
             reply_markup=admin_panel_keyboard(),
         )
     else:

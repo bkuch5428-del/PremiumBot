@@ -22,6 +22,31 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📋 Pending Payments", callback_data="admin_pending"),
                 InlineKeyboardButton(text="📦 Plans",            callback_data="admin_plans"),
             ],
+            [
+                InlineKeyboardButton(text="⚙️ Settings", callback_data="admin_settings"),
+            ],
+        ]
+    )
+
+
+def admin_settings_keyboard() -> InlineKeyboardMarkup:
+    """Settings sub-panel."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📝 Welcome Message", callback_data="settings_welcome")],
+            [InlineKeyboardButton(text="💳 Payment Message",  callback_data="settings_payment")],
+            [InlineKeyboardButton(text="🖼 QR Image",         callback_data="settings_qr")],
+            [InlineKeyboardButton(text="👥 Support Group",    callback_data="settings_support")],
+            [InlineKeyboardButton(text="⬅️ Back",             callback_data="settings_back")],
+        ]
+    )
+
+
+def settings_cancel_keyboard() -> InlineKeyboardMarkup:
+    """Shown while awaiting new setting value — lets admin bail out."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Cancel", callback_data="settings_cancel")],
         ]
     )
 
