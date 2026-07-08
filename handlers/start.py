@@ -26,6 +26,13 @@ _DEFAULT_WELCOME = (
 
 PRODUCT_TEXT = "Hello, {first_name} 👋\n\nChoose a plan to get started 💫"
 
+_DEFAULT_BUY_MESSAGE = (
+    "📦 <b>{plan_name}</b>\n\n"
+    "💰 <b>Price:</b> ₹{plan_price}\n"
+    "⏳ <b>Validity:</b> {plan_validity}\n\n"
+    "Tap <b>Buy Now</b> to proceed with payment."
+)
+
 NO_PLANS_TEXT = (
     "⚠️ No plans are available right now.\n\n"
     "Please check back later or contact support."
@@ -148,12 +155,22 @@ async def callback_plan(call: CallbackQuery, bot: Bot) -> None:
 
     await send_demo_videos(bot, call.message.chat.id, plan)
 
-    plan_text = (
-        f"📦 <b>{plan['name']}</b>\n\n"
-        f"💰 <b>Price:</b> ₹{plan['price']}\n"
-        f"⏳ <b>Validity:</b> {plan['validity']}\n\n"
-        "Tap <b>Buy Now</b> to proceed with payment."
-    )
+    buy_tpl = (await get_setting("buy_message")) or _DEFAULT_BUY_MESSAGE
+    try:
+        plan_text = buy_tpl.format(
+            plan_name=plan["name"],
+            plan_price=plan["price"],
+            plan_validity=plan["validity"],
+        )
+    except (KeyError, IndexError, ValueError):
+        # Admin-entered template has an invalid placeholder — fall back safely
+        # rather than crashing the flow.
+        logger.exception("Invalid placeholder in buy_message template")
+        plan_text = _DEFAULT_BUY_MESSAGE.format(
+            plan_name=plan["name"],
+            plan_price=plan["price"],
+            plan_validity=plan["validity"],
+        )
     await call.message.answer(plan_text, reply_markup=plan_detail_keyboard(plan_id))
 
 
