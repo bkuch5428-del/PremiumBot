@@ -1,0 +1,2 @@
+- [Telegram bot conflict debugging](telegram-bot-polling-conflicts.md) — TelegramConflictError from a duplicate poller (e.g. old Render deploy) mimics in-app data/state bugs; check for it before assuming code regressions.
+- [MongoDB order-approval race](mongo-atomic-order-approval.md) — always use find_one_and_update (not find_one + update_one) for state-transition writes gated on a status field.

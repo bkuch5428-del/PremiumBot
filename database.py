@@ -257,26 +257,34 @@ async def approve_order(order_id: str) -> dict | None:
     Returns a dict with user_id, plan_name, plan_validity, subscription_end, access_link.
     Returns None if the order does not exist or is not in 'pending' state.
     """
-    doc = await _orders.find_one({"_id": order_id, "payment_status": "pending"})
-    if not doc:
+    # Peek at plan_validity first so we know the subscription length; the actual
+    # state transition below is atomic on (_id, payment_status='pending') so two
+    # concurrent approvals of the same order can't both succeed.
+    peek = await _orders.find_one({"_id": order_id, "payment_status": "pending"})
+    if not peek:
         return None
 
     try:
-        days = int(str(doc["plan_validity"]).strip().split()[0])
+        days = int(str(peek["plan_validity"]).strip().split()[0])
     except (ValueError, IndexError):
         days = 30
 
     now = datetime.now(timezone.utc)
     sub_end = now + timedelta(days=days)
 
-    await _orders.update_one(
-        {"_id": order_id},
+    # Atomic compare-and-set: only succeeds if the order is still 'pending' at
+    # the moment of the update, preventing a double-approve race.
+    doc = await _orders.find_one_and_update(
+        {"_id": order_id, "payment_status": "pending"},
         {"$set": {
             "payment_status":     "approved",
             "subscription_start": now.isoformat(),
             "subscription_end":   sub_end.isoformat(),
         }},
     )
+    if not doc:
+        # Another concurrent call already approved/changed this order.
+        return None
 
     logger.info("Order %s approved; sub ends %s", order_id, sub_end.date())
     return {
