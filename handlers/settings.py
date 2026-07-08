@@ -57,7 +57,6 @@ async def cb_settings_panel(call: CallbackQuery) -> None:
 
     cfg = await get_all_settings()
     welcome_preview = html.escape((cfg.get("welcome_message") or "")[:60].replace("\n", " "))
-    buy_preview     = html.escape((cfg.get("buy_message") or "")[:60].replace("\n", " "))
     payment_preview = html.escape((cfg.get("payment_message") or "")[:60].replace("\n", " "))
     qr_val          = cfg.get("qr_image", "")
     support_val     = html.escape(cfg.get("support_group_url", ""))
@@ -65,7 +64,6 @@ async def cb_settings_panel(call: CallbackQuery) -> None:
     text = (
         "⚙️ <b>Settings</b>\n\n"
         f"📝 <b>Welcome:</b> {welcome_preview or '(default)'}…\n"
-        f"🛒 <b>Buy msg:</b> {buy_preview or '(default)'}…\n"
         f"💳 <b>Payment msg:</b> {payment_preview or '(default)'}…\n"
         f"🖼 <b>QR Image:</b> {'✅ set' if qr_val else '⬜ not set'}\n"
         f"👥 <b>Support:</b> {support_val or '(env default)'}\n\n"
@@ -143,44 +141,6 @@ async def handle_welcome_input(message: Message) -> None:
     await message.answer(
         "✅ <b>Welcome message updated!</b>\n\n"
         "Users will see the new message the next time they start the bot.",
-        reply_markup=admin_settings_keyboard(),
-    )
-
-
-# ── Buy Message ───────────────────────────────────────────────────────────────
-
-@router.callback_query(lambda c: c.data == "settings_buy")
-async def cb_settings_buy(call: CallbackQuery) -> None:
-    if not _is_admin(call.from_user.id):
-        await call.answer("⛔ Unauthorised.", show_alert=True)
-        return
-    await call.answer()
-    _state[call.from_user.id] = {"step": "settings:buy"}
-
-    current = await get_setting("buy_message")
-    await call.message.answer(
-        "🛒 <b>Buy Message</b>\n\n"
-        "<b>Current message:</b>\n"
-        f"{html.escape(current) if current else '(not set — using default)'}\n\n"
-        "Send the new Buy Message shown to users after they select a plan.\n"
-        "Write the whole message as you want it to appear (title, description, "
-        "price, validity, emojis, formatting, line breaks, etc.) in one go.\n\n"
-        "You can use these placeholders and they will be filled in automatically:\n"
-        "<code>{plan_name}</code>  <code>{plan_price}</code>  <code>{plan_validity}</code>\n\n"
-        "HTML formatting is supported.",
-        reply_markup=settings_cancel_keyboard(),
-    )
-
-
-@router.message(_in_step("settings:buy"), F.text)
-async def handle_buy_input(message: Message) -> None:
-    if not _is_admin(message.from_user.id) or (message.text or "").startswith("/"):
-        return
-    _state.pop(message.from_user.id, None)
-    await set_setting("buy_message", message.text.strip())
-    await message.answer(
-        "✅ <b>Buy message updated!</b>\n\n"
-        "Users will see the new message the next time they select a plan.",
         reply_markup=admin_settings_keyboard(),
     )
 

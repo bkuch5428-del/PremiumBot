@@ -691,6 +691,73 @@ async def handle_demo_videos_media(message: Message) -> None:
         pass
 
 
+# ── Edit Plan Buy Message ─────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "admin_buymsg")
+async def cb_buymsg_start(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    plans = await get_all_plans()
+    if not plans:
+        await call.message.edit_text(
+            "📝 <b>Edit Plan Buy Message</b>\n\nNo plans found.",
+            reply_markup=admin_panel_keyboard(),
+        )
+        return
+    _state[call.from_user.id] = {"step": "buymsg:select", "data": {}}
+    await call.message.edit_text(
+        "📝 <b>Edit Plan Buy Message</b>\n\nSelect a plan:",
+        reply_markup=admin_plan_list_keyboard(plans, "admin_bm"),
+    )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin_bm:"))
+async def cb_buymsg_plan_selected(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    plan_id = int(call.data.split(":", 1)[1])
+    await call.answer()
+    plan = await get_plan(plan_id)
+    if not plan:
+        await call.answer("Plan not found.", show_alert=True)
+        return
+    _state[call.from_user.id] = {
+        "step": "buymsg:value",
+        "data": {"plan_id": plan_id},
+    }
+    current = plan.get("buy_message", "")
+    await call.message.edit_text(
+        f"📝 <b>Edit Buy Message: {plan['name']}</b>\n\n"
+        "<b>Current message:</b>\n"
+        f"{current if current else '(not set — using default)'}\n\n"
+        "Send the new complete Buy Message for this plan (title, description, "
+        "price, validity, emojis, formatting, line breaks, etc. — all in one message).\n\n"
+        "You can use these placeholders and they will be filled in automatically:\n"
+        "<code>{plan_name}</code>  <code>{plan_price}</code>  <code>{plan_validity}</code>\n\n"
+        "HTML formatting is supported.",
+        reply_markup=None,
+    )
+
+
+@router.message(_in_state("buymsg:value"), F.text)
+async def handle_buymsg_value(message: Message) -> None:
+    if not _is_admin(message.from_user.id) or (message.text or "").startswith("/"):
+        return
+    st = _state.pop(message.from_user.id, None)
+    if not st:
+        return
+    plan_id = st["data"]["plan_id"]
+    await update_plan(plan_id, buy_message=message.text.strip())
+    await message.answer(
+        "✅ <b>Buy message updated for this plan!</b>\n\n"
+        "Users will see it the next time they select this plan.",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+
 # ── Change Access Link ────────────────────────────────────────────────────────
 
 @router.callback_query(lambda c: c.data == "admin_link")

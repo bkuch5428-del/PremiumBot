@@ -155,7 +155,7 @@ async def callback_plan(call: CallbackQuery, bot: Bot) -> None:
 
     await send_demo_videos(bot, call.message.chat.id, plan)
 
-    buy_tpl = (await get_setting("buy_message")) or _DEFAULT_BUY_MESSAGE
+    buy_tpl = plan.get("buy_message") or _DEFAULT_BUY_MESSAGE
     try:
         plan_text = buy_tpl.format(
             plan_name=plan["name"],

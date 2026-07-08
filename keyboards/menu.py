@@ -15,6 +15,9 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🔗 Change Access Link", callback_data="admin_link"),
             ],
             [
+                InlineKeyboardButton(text="📝 Edit Plan Buy Message", callback_data="admin_buymsg"),
+            ],
+            [
                 InlineKeyboardButton(text="📊 Statistics", callback_data="admin_stats"),
                 InlineKeyboardButton(text="📢 Broadcast",  callback_data="admin_broadcast"),
             ],
@@ -34,7 +37,6 @@ def admin_settings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📝 Welcome Message", callback_data="settings_welcome")],
-            [InlineKeyboardButton(text="🛒 Edit Buy Message", callback_data="settings_buy")],
             [InlineKeyboardButton(text="💳 Payment Message",  callback_data="settings_payment")],
             [InlineKeyboardButton(text="🖼 QR Image",         callback_data="settings_qr")],
             [InlineKeyboardButton(text="👥 Support Group",    callback_data="settings_support")],

@@ -153,6 +153,7 @@ def _plan_doc_to_dict(doc: dict) -> dict:
         "demo_message_ids":   doc.get("demo_message_ids", []),
         "source_channel_id":  doc.get("source_channel_id", ""),
         "access_link":        doc.get("access_link", ""),
+        "buy_message":        doc.get("buy_message", ""),
         "created_at":         doc.get("created_at"),
     }
 
