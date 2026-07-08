@@ -9,6 +9,7 @@ Sequence:
   5. approve / reject     → admin buttons in review channel
 """
 
+import html
 import logging
 import random
 from datetime import datetime, timezone, timedelta
@@ -175,7 +176,6 @@ async def callback_cancel_order(call: CallbackQuery) -> None:
     _awaiting_proof.pop(call.from_user.id, None)
 
     plans = await get_all_plans()
-    from keyboards.menu import plans_list_keyboard
     await call.message.answer(
         _PRODUCT_TEXT.format(first_name=call.from_user.first_name),
         reply_markup=plans_list_keyboard(plans) if plans else main_menu_keyboard(),
@@ -192,7 +192,6 @@ async def callback_cancel_proof(call: CallbackQuery) -> None:
         await update_order_status(info["order_id"], "cancelled")
 
     plans = await get_all_plans()
-    from keyboards.menu import plans_list_keyboard
     await call.message.answer(
         _PRODUCT_TEXT.format(first_name=call.from_user.first_name),
         reply_markup=plans_list_keyboard(plans) if plans else main_menu_keyboard(),
@@ -221,14 +220,14 @@ async def handle_payment_proof(message: Message, bot: Bot) -> None:
 
     await update_order_status(order_id, "pending")
 
-    username = f"@{user.username}" if user.username else "None"
+    username = f"@{html.escape(user.username)}" if user.username else "None"
     review_caption = (
         f"🆔 Order: #{order_id}\n"
-        f"👤 Name: {user.first_name}\n"
+        f"👤 Name: {html.escape(user.first_name)}\n"
         f"📛 Username: {username}\n"
         f"🆔 User ID: <code>{user.id}</code>\n"
-        f"📦 Plan: {plan_name}\n"
-        f"💰 Amount: ₹{plan_price}\n"
+        f"📦 Plan: {html.escape(plan_name)}\n"
+        f"💰 Amount: ₹{html.escape(plan_price)}\n"
         f"🕒 Time: {_now_ist()}"
     )
 
@@ -245,7 +244,7 @@ async def handle_payment_proof(message: Message, bot: Bot) -> None:
             else:
                 await bot.send_message(
                     chat_id=PAYMENT_REVIEW_CHANNEL_ID,
-                    text=review_caption + f"\n\n📝 UTR / Transaction ID: {message.text}",
+                    text=review_caption + f"\n\n📝 UTR / Transaction ID: {html.escape(message.text or '')}",
                     reply_markup=kb,
                 )
         else:

@@ -1,12 +1,50 @@
-import json
+"""
+database.py — MongoDB (Motor / async) data layer.
+
+Migrated from SQLite (aiosqlite) to MongoDB Atlas. All function names and
+return shapes are kept identical to the previous SQLite implementation so
+every handler module continues to work unmodified.
+
+Collections (auto-created on first write — no manual setup needed):
+  users            — Telegram users (​_id = telegram user id)
+  plans            — subscription plans (_id = auto-increment int, exposed as "id")
+  orders           — payment orders (_id = order_id string)
+  settings         — admin-editable key/value config (_id = key)
+  counters         — internal auto-increment sequence tracker
+
+Connection:
+  URI is read exclusively from the MONGODB_URI environment variable.
+  Database name is fixed: "premium_bot".
+"""
+
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 
-import aiosqlite
+from motor.motor_asyncio import AsyncIOMotorClient
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = "users.db"
+MONGODB_URI = os.getenv("MONGODB_URI", "")
+if not MONGODB_URI:
+    raise ValueError(
+        "MONGODB_URI is not set. Add it as an environment secret "
+        "(MongoDB Atlas connection string)."
+    )
+
+DB_NAME = "premium_bot"
+
+# ── Motor client (created once, reused for the whole process) ─────────────────
+
+_client = AsyncIOMotorClient(MONGODB_URI)
+_db = _client[DB_NAME]
+
+_users = _db["users"]
+_plans = _db["plans"]
+_orders = _db["orders"]
+_settings = _db["settings"]
+_counters = _db["counters"]
+
 
 # ── Settings defaults (seeded once; admin can change via /admin → Settings) ───
 
@@ -31,122 +69,93 @@ _DEFAULT_PAYMENT = (
 )
 
 
-# ── Schema initialisation ─────────────────────────────────────────────────────
+# ── Schema / index initialisation ─────────────────────────────────────────────
 
 async def init_db() -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        # Users
-        await db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id          INTEGER PRIMARY KEY,
-                username    TEXT,
-                first_name  TEXT,
-                joined_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
+    """
+    Ensure indexes exist and seed default settings. Collections themselves
+    are auto-created by MongoDB on first insert, so nothing else is required.
+    This is safe to call on every startup — it never resets existing data.
+    """
+    # Helpful indexes (no-ops if they already exist)
+    await _orders.create_index("payment_status")
+    await _orders.create_index("user_id")
+    await _orders.create_index("subscription_end")
+
+    # Seed default settings only if they don't already exist —
+    # existing admin-edited values are never overwritten.
+    _defaults = [
+        ("welcome_message", _DEFAULT_WELCOME),
+        ("payment_message", _DEFAULT_PAYMENT),
+        ("qr_image", ""),          # falls back to QR_IMAGE_URL env var when empty
+        ("support_group_url", ""),  # falls back to SUPPORT_GROUP_URL env var when empty
+    ]
+    for key, value in _defaults:
+        await _settings.update_one(
+            {"_id": key},
+            {"$setOnInsert": {"value": value}},
+            upsert=True,
         )
 
-        # Plans (fully dynamic, no hardcoded data)
-        await db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS plans (
-                id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                name              TEXT    NOT NULL,
-                price             TEXT    NOT NULL,
-                validity          TEXT    NOT NULL,
-                demo_message_ids  TEXT    NOT NULL DEFAULT '[]',
-                source_channel_id TEXT    NOT NULL DEFAULT '',
-                access_link       TEXT    NOT NULL DEFAULT '',
-                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
+    # Ensure the plans auto-increment counter exists without resetting it.
+    await _counters.update_one(
+        {"_id": "plans"},
+        {"$setOnInsert": {"seq": 0}},
+        upsert=True,
+    )
 
-        # Orders
-        await db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS orders (
-                order_id       TEXT PRIMARY KEY,
-                user_id        INTEGER NOT NULL,
-                plan_name      TEXT    NOT NULL,
-                plan_price     TEXT    NOT NULL,
-                plan_validity  TEXT    NOT NULL,
-                payment_status TEXT    NOT NULL DEFAULT 'created',
-                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
+    logger.info("MongoDB connected — database %r ready", DB_NAME)
 
-        # Migrate orders: add columns that may be missing on existing DBs
-        for col_def in (
-            "subscription_start TEXT",
-            "subscription_end   TEXT",
-            "plan_id            INTEGER",
-            "access_link        TEXT",
-        ):
-            try:
-                await db.execute(f"ALTER TABLE orders ADD COLUMN {col_def}")
-            except Exception:
-                pass  # column already exists — safe to ignore
 
-        # Settings (key-value store for admin-editable bot config)
-        await db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS settings (
-                key   TEXT PRIMARY KEY,
-                value TEXT NOT NULL DEFAULT ''
-            )
-            """
-        )
-
-        # Seed default values — INSERT OR IGNORE so existing values are never overwritten
-        _defaults = [
-            ("welcome_message", _DEFAULT_WELCOME),
-            ("payment_message", _DEFAULT_PAYMENT),
-            ("qr_image",        ""),   # falls back to QR_IMAGE_URL env var when empty
-            ("support_group_url", ""), # falls back to SUPPORT_GROUP_URL env var when empty
-        ]
-        for _k, _v in _defaults:
-            await db.execute(
-                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
-                (_k, _v),
-            )
-
-        await db.commit()
-    logger.info("Database initialised at %s", DB_PATH)
+async def _next_plan_id() -> int:
+    """Atomically increment and return the next integer plan id."""
+    doc = await _counters.find_one_and_update(
+        {"_id": "plans"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True,
+    )
+    return doc["seq"]
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
 
 async def save_user(user_id: int, username: str | None, first_name: str) -> bool:
     """Upsert the user record. Returns True if the user is brand-new."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT 1 FROM users WHERE id = ?", (user_id,))
-        is_new = await cursor.fetchone() is None
-        await db.execute(
-            """
-            INSERT INTO users (id, username, first_name)
-            VALUES (?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                username   = excluded.username,
-                first_name = excluded.first_name
-            """,
-            (user_id, username, first_name),
-        )
-        await db.commit()
+    existing = await _users.find_one({"_id": user_id}, {"_id": 1})
+    is_new = existing is None
+    await _users.update_one(
+        {"_id": user_id},
+        {
+            "$set": {"username": username, "first_name": first_name},
+            "$setOnInsert": {"joined_at": datetime.now(timezone.utc)},
+        },
+        upsert=True,
+    )
     return is_new
 
 
 async def get_all_user_ids() -> list[int]:
     """Return every registered user ID (for broadcast)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT id FROM users")
-        rows = await cursor.fetchall()
-    return [r[0] for r in rows]
+    cursor = _users.find({}, {"_id": 1})
+    return [doc["_id"] async for doc in cursor]
 
 
 # ── Plans ─────────────────────────────────────────────────────────────────────
+
+def _plan_doc_to_dict(doc: dict) -> dict:
+    """Convert a Mongo plan document to the legacy dict shape (id, not _id)."""
+    return {
+        "id":                 doc["_id"],
+        "name":               doc.get("name", ""),
+        "price":              doc.get("price", ""),
+        "validity":           doc.get("validity", ""),
+        "demo_message_ids":   doc.get("demo_message_ids", []),
+        "source_channel_id":  doc.get("source_channel_id", ""),
+        "access_link":        doc.get("access_link", ""),
+        "created_at":         doc.get("created_at"),
+    }
+
 
 async def create_plan(
     name: str,
@@ -157,77 +166,44 @@ async def create_plan(
     access_link: str,
 ) -> int:
     """Insert a new plan. Returns the new plan's id."""
-    ids_json = json.dumps(demo_message_ids)
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            INSERT INTO plans (name, price, validity, demo_message_ids, source_channel_id, access_link)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (name, price, validity, ids_json, source_channel_id, access_link),
-        )
-        plan_id = cursor.lastrowid
-        await db.commit()
+    plan_id = await _next_plan_id()
+    await _plans.insert_one({
+        "_id":               plan_id,
+        "name":              name,
+        "price":             price,
+        "validity":          validity,
+        "demo_message_ids":  list(demo_message_ids or []),
+        "source_channel_id": source_channel_id,
+        "access_link":       access_link,
+        "created_at":        datetime.now(timezone.utc),
+    })
     logger.info("Created plan id=%s name=%r", plan_id, name)
     return plan_id
 
 
 async def get_all_plans() -> list[dict]:
-    """Return all plans as a list of dicts."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            "SELECT id, name, price, validity, demo_message_ids, source_channel_id, access_link, created_at "
-            "FROM plans ORDER BY id"
-        )
-        rows = await cursor.fetchall()
-    result = []
-    for r in rows:
-        d = dict(r)
-        try:
-            d["demo_message_ids"] = json.loads(d["demo_message_ids"] or "[]")
-        except Exception:
-            d["demo_message_ids"] = []
-        result.append(d)
-    return result
+    """Return all plans as a list of dicts, ordered by id."""
+    cursor = _plans.find({}).sort("_id", 1)
+    return [_plan_doc_to_dict(doc) async for doc in cursor]
 
 
 async def get_plan(plan_id: int) -> dict | None:
     """Return a single plan dict or None."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            "SELECT id, name, price, validity, demo_message_ids, source_channel_id, access_link "
-            "FROM plans WHERE id = ?",
-            (plan_id,),
-        )
-        row = await cursor.fetchone()
-    if not row:
-        return None
-    d = dict(row)
-    try:
-        d["demo_message_ids"] = json.loads(d["demo_message_ids"] or "[]")
-    except Exception:
-        d["demo_message_ids"] = []
-    return d
+    doc = await _plans.find_one({"_id": plan_id})
+    return _plan_doc_to_dict(doc) if doc else None
 
 
 async def update_plan(plan_id: int, **fields) -> None:
-    """Update any subset of plan fields. Serialises demo_message_ids if given."""
+    """Update any subset of plan fields."""
     if "demo_message_ids" in fields:
-        fields["demo_message_ids"] = json.dumps(fields["demo_message_ids"])
-    set_clause = ", ".join(f"{k} = ?" for k in fields)
-    values = list(fields.values()) + [plan_id]
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(f"UPDATE plans SET {set_clause} WHERE id = ?", values)
-        await db.commit()
+        fields["demo_message_ids"] = list(fields["demo_message_ids"] or [])
+    if fields:
+        await _plans.update_one({"_id": plan_id}, {"$set": fields})
     logger.info("Updated plan id=%s fields=%s", plan_id, list(fields.keys()))
 
 
 async def delete_plan(plan_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM plans WHERE id = ?", (plan_id,))
-        await db.commit()
+    await _plans.delete_one({"_id": plan_id})
     logger.info("Deleted plan id=%s", plan_id)
 
 
@@ -243,26 +219,31 @@ async def create_order(
     access_link: str = "",
 ) -> None:
     """Insert a new order row with status 'created'."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """
-            INSERT INTO orders
-                (order_id, user_id, plan_name, plan_price, plan_validity, plan_id, access_link)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (order_id, user_id, plan_name, plan_price, plan_validity, plan_id, access_link),
-        )
-        await db.commit()
+    try:
+        await _orders.insert_one({
+            "_id":                order_id,
+            "user_id":            user_id,
+            "plan_name":          plan_name,
+            "plan_price":         plan_price,
+            "plan_validity":      plan_validity,
+            "payment_status":     "created",
+            "created_at":         datetime.now(timezone.utc),
+            "subscription_start": None,
+            "subscription_end":   None,
+            "plan_id":            plan_id,
+            "access_link":        access_link,
+        })
+    except Exception as exc:
+        # Preserve the SQLite-era "UNIQUE" signal so callers retrying on
+        # order_id collisions (see handlers/payment.py) keep working.
+        if "duplicate key" in str(exc).lower() or "E11000" in str(exc):
+            raise Exception(f"UNIQUE constraint failed: orders.order_id ({exc})")
+        raise
     logger.debug("Created order %s for user %s", order_id, user_id)
 
 
 async def update_order_status(order_id: str, status: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE orders SET payment_status = ? WHERE order_id = ?",
-            (status, order_id),
-        )
-        await db.commit()
+    await _orders.update_one({"_id": order_id}, {"$set": {"payment_status": status}})
     logger.debug("Order %s → %s", order_id, status)
 
 
@@ -276,160 +257,144 @@ async def approve_order(order_id: str) -> dict | None:
     Returns a dict with user_id, plan_name, plan_validity, subscription_end, access_link.
     Returns None if the order does not exist or is not in 'pending' state.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            "SELECT user_id, plan_name, plan_validity, access_link "
-            "FROM orders WHERE order_id = ? AND payment_status = 'pending'",
-            (order_id,),
-        )
-        row = await cursor.fetchone()
-        if not row:
-            return None
+    doc = await _orders.find_one({"_id": order_id, "payment_status": "pending"})
+    if not doc:
+        return None
 
-        try:
-            days = int(str(row["plan_validity"]).strip().split()[0])
-        except (ValueError, IndexError):
-            days = 30
+    try:
+        days = int(str(doc["plan_validity"]).strip().split()[0])
+    except (ValueError, IndexError):
+        days = 30
 
-        now = datetime.now(timezone.utc)
-        sub_end = now + timedelta(days=days)
+    now = datetime.now(timezone.utc)
+    sub_end = now + timedelta(days=days)
 
-        await db.execute(
-            """
-            UPDATE orders
-               SET payment_status    = 'approved',
-                   subscription_start = ?,
-                   subscription_end   = ?
-             WHERE order_id = ?
-            """,
-            (now.isoformat(), sub_end.isoformat(), order_id),
-        )
-        await db.commit()
+    await _orders.update_one(
+        {"_id": order_id},
+        {"$set": {
+            "payment_status":     "approved",
+            "subscription_start": now.isoformat(),
+            "subscription_end":   sub_end.isoformat(),
+        }},
+    )
 
     logger.info("Order %s approved; sub ends %s", order_id, sub_end.date())
     return {
-        "user_id":          row["user_id"],
-        "plan_name":        row["plan_name"],
-        "plan_validity":    row["plan_validity"],
+        "user_id":          doc["user_id"],
+        "plan_name":        doc["plan_name"],
+        "plan_validity":    doc["plan_validity"],
         "subscription_end": sub_end,
-        "access_link":      row["access_link"] or "",
+        "access_link":      doc.get("access_link") or "",
     }
 
 
 async def get_pending_orders() -> list[dict]:
     """Return all orders with payment_status='pending'."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            "SELECT order_id, user_id, plan_name, plan_price, created_at "
-            "FROM orders WHERE payment_status = 'pending' ORDER BY created_at DESC"
-        )
-        rows = await cursor.fetchall()
-    return [dict(r) for r in rows]
+    cursor = _orders.find(
+        {"payment_status": "pending"},
+        {"_id": 1, "user_id": 1, "plan_name": 1, "plan_price": 1, "created_at": 1},
+    ).sort("created_at", -1)
+    result = []
+    async for doc in cursor:
+        result.append({
+            "order_id":   doc["_id"],
+            "user_id":    doc.get("user_id"),
+            "plan_name":  doc.get("plan_name"),
+            "plan_price": doc.get("plan_price"),
+            "created_at": doc.get("created_at"),
+        })
+    return result
 
 
 async def get_user_active_subscription(user_id: int) -> dict | None:
     """Return the most recent approved/active order for a user, or None."""
     now_iso = datetime.now(timezone.utc).isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            """
-            SELECT order_id, plan_name, plan_price, plan_validity,
-                   subscription_start, subscription_end
-            FROM orders
-            WHERE user_id = ?
-              AND payment_status = 'approved'
-              AND subscription_end >= ?
-            ORDER BY subscription_end DESC
-            LIMIT 1
-            """,
-            (user_id, now_iso),
-        )
-        row = await cursor.fetchone()
-    return dict(row) if row else None
+    doc = await _orders.find_one(
+        {
+            "user_id": user_id,
+            "payment_status": "approved",
+            "subscription_end": {"$gte": now_iso},
+        },
+        sort=[("subscription_end", -1)],
+    )
+    if not doc:
+        return None
+    return {
+        "order_id":           doc["_id"],
+        "plan_name":          doc.get("plan_name"),
+        "plan_price":         doc.get("plan_price"),
+        "plan_validity":      doc.get("plan_validity"),
+        "subscription_start": doc.get("subscription_start"),
+        "subscription_end":   doc.get("subscription_end"),
+    }
 
 
 # ── Settings ─────────────────────────────────────────────────────────────────
 
 async def get_setting(key: str, default: str = "") -> str:
     """Return the value for a settings key, or default if not found."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT value FROM settings WHERE key = ?", (key,)
-        )
-        row = await cursor.fetchone()
-    return row[0] if row else default
+    doc = await _settings.find_one({"_id": key})
+    return doc["value"] if doc else default
 
 
 async def set_setting(key: str, value: str) -> None:
     """Upsert a settings key-value pair."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?)"
-            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, value),
-        )
-        await db.commit()
+    await _settings.update_one(
+        {"_id": key},
+        {"$set": {"value": value}},
+        upsert=True,
+    )
     logger.info("Setting %r updated", key)
 
 
 async def get_all_settings() -> dict[str, str]:
     """Return all settings as a plain dict."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT key, value FROM settings")
-        rows = await cursor.fetchall()
-    return {r[0]: r[1] for r in rows}
+    cursor = _settings.find({})
+    return {doc["_id"]: doc.get("value", "") async for doc in cursor}
 
 
 # ── Statistics ────────────────────────────────────────────────────────────────
 
 async def get_stats() -> dict:
     """Return a stats dict for the admin statistics panel."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
 
-        total_users = (await (await db.execute(
-            "SELECT COUNT(*) FROM users"
-        )).fetchone())[0]
+    total_users = await _users.count_documents({})
+    total_plans = await _plans.count_documents({})
 
-        total_plans = (await (await db.execute(
-            "SELECT COUNT(*) FROM plans"
-        )).fetchone())[0]
+    active_subs = await _orders.count_documents({
+        "payment_status": "approved",
+        "subscription_end": {"$gte": now_iso},
+    })
+    expired_subs = await _orders.count_documents({
+        "payment_status": "approved",
+        "subscription_end": {"$lt": now_iso},
+    })
+    pending = await _orders.count_documents({"payment_status": "pending"})
+    approved_orders = await _orders.count_documents({"payment_status": "approved"})
+    rejected_orders = await _orders.count_documents({"payment_status": "rejected"})
 
-        active_subs = (await (await db.execute(
-            "SELECT COUNT(*) FROM orders "
-            "WHERE payment_status = 'approved' AND subscription_end >= ?",
-            (now_iso,),
-        )).fetchone())[0]
-
-        expired_subs = (await (await db.execute(
-            "SELECT COUNT(*) FROM orders "
-            "WHERE payment_status = 'approved' AND subscription_end < ?",
-            (now_iso,),
-        )).fetchone())[0]
-
-        pending = (await (await db.execute(
-            "SELECT COUNT(*) FROM orders WHERE payment_status = 'pending'"
-        )).fetchone())[0]
-
-        approved_orders = (await (await db.execute(
-            "SELECT COUNT(*) FROM orders WHERE payment_status = 'approved'"
-        )).fetchone())[0]
-
-        rejected_orders = (await (await db.execute(
-            "SELECT COUNT(*) FROM orders WHERE payment_status = 'rejected'"
-        )).fetchone())[0]
-
-        # Revenue: sum plan_price (stored as TEXT) for every approved order.
-        # CAST handles numeric strings like "99", "199.50", etc.; non-numeric
-        # values cast to 0 so the sum never raises an error.
-        revenue_row = (await (await db.execute(
-            "SELECT COALESCE(SUM(CAST(plan_price AS REAL)), 0) "
-            "FROM orders WHERE payment_status = 'approved'"
-        )).fetchone())[0]
-        total_revenue = float(revenue_row)
+    # Revenue: sum plan_price (stored as string) across every approved order.
+    # $toDouble handles numeric strings like "99", "199.50"; non-numeric
+    # values are coerced to 0 via $convert's onError so the pipeline never raises.
+    revenue_cursor = _orders.aggregate([
+        {"$match": {"payment_status": "approved"}},
+        {"$group": {
+            "_id": None,
+            "total": {
+                "$sum": {
+                    "$convert": {
+                        "input": "$plan_price",
+                        "to": "double",
+                        "onError": 0,
+                        "onNull": 0,
+                    }
+                }
+            },
+        }},
+    ])
+    revenue_docs = await revenue_cursor.to_list(length=1)
+    total_revenue = float(revenue_docs[0]["total"]) if revenue_docs else 0.0
 
     return {
         "total_users":      total_users,

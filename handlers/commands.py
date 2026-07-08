@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone, timedelta
 
 from aiogram import Router
 from aiogram.filters import Command
@@ -7,6 +8,8 @@ from aiogram.types import Message
 from config import SUPPORT_GROUP_URL
 from database import get_all_plans, get_user_active_subscription, get_setting
 from keyboards.menu import plan_detail_keyboard, plans_list_keyboard
+
+_IST = timezone(timedelta(hours=5, minutes=30))
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +39,6 @@ async def cmd_plans(message: Message) -> None:
 @router.message(Command("status", ignore_case=True))
 async def cmd_status(message: Message) -> None:
     logger.info("/status from user %s", message.from_user.id)
-    from datetime import timezone, timedelta
-    _IST = timezone(timedelta(hours=5, minutes=30))
 
     sub = await get_user_active_subscription(message.from_user.id)
     if not sub:
@@ -47,7 +48,6 @@ async def cmd_status(message: Message) -> None:
         )
         return
 
-    from datetime import datetime
     try:
         end_utc = datetime.fromisoformat(sub["subscription_end"])
         end_ist = end_utc.astimezone(_IST)

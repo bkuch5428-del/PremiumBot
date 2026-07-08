@@ -4,6 +4,7 @@ handlers/log_channel.py — centralised helpers for posting activity events to t
 All functions silently swallow errors so a log failure never disrupts the user flow.
 """
 
+import html
 import logging
 from datetime import datetime, timezone, timedelta
 
@@ -28,11 +29,11 @@ async def _send(bot: Bot, text: str) -> None:
 
 
 async def log_new_user(bot: Bot, user_id: int, first_name: str, username: str | None) -> None:
-    uname = f"@{username}" if username else "None"
+    uname = f"@{html.escape(username)}" if username else "None"
     await _send(
         bot,
         "🆕 <b>New User</b>\n\n"
-        f"👤 Name: {first_name}\n"
+        f"👤 Name: {html.escape(first_name)}\n"
         f"📛 Username: {uname}\n"
         f"🆔 User ID: <code>{user_id}</code>\n"
         f"🕒 Time: {_now_ist()}",
@@ -49,10 +50,10 @@ async def log_plan_selected(
     await _send(
         bot,
         "💎 <b>Plan Selected</b>\n\n"
-        f"👤 Name: {first_name}\n"
+        f"👤 Name: {html.escape(first_name)}\n"
         f"🆔 User ID: <code>{user_id}</code>\n"
-        f"📦 Plan: {plan_title}\n"
-        f"💰 Price: {price}",
+        f"📦 Plan: {html.escape(plan_title)}\n"
+        f"💰 Price: {html.escape(price)}",
     )
 
 
@@ -65,7 +66,7 @@ async def log_payment_started(
     await _send(
         bot,
         "💳 <b>Payment Started</b>\n\n"
-        f"👤 Name: {first_name}\n"
+        f"👤 Name: {html.escape(first_name)}\n"
         f"🆔 User ID: <code>{user_id}</code>\n"
-        f"📦 Plan: {plan_title}",
+        f"📦 Plan: {html.escape(plan_title)}",
     )

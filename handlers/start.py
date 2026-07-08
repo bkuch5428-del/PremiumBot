@@ -6,7 +6,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 
 from database import save_user, get_all_plans, get_plan, get_setting
-from keyboards.menu import plans_list_keyboard, plan_detail_keyboard, product_keyboard, main_menu_keyboard
+from keyboards.menu import plans_list_keyboard, plan_detail_keyboard, main_menu_keyboard
 from handlers.log_channel import log_new_user, log_plan_selected
 
 logger = logging.getLogger(__name__)
