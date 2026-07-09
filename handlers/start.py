@@ -5,7 +5,7 @@ from aiogram import Router, Bot
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 
-from database import save_user, get_all_plans, get_plan, get_setting
+from database import save_user, get_all_plans, get_plan, get_setting, get_start_demo
 from keyboards.menu import plans_list_keyboard, plan_detail_keyboard, main_menu_keyboard
 from handlers.log_channel import log_new_user, log_plan_selected
 
@@ -39,7 +39,48 @@ NO_PLANS_TEXT = (
 )
 
 
-# ── Demo video sender ─────────────────────────────────────────────────────────
+# ── Start demo video sender ───────────────────────────────────────────────────
+
+async def send_start_demo_videos(bot: Bot, chat_id: int) -> None:
+    """
+    Send the global start demo videos to the user on /start, if enabled.
+    Reads message IDs and source channel from MongoDB — never downloads media.
+    Returns immediately (no-op) when disabled or no IDs are configured.
+    """
+    cfg = await get_start_demo()
+    if not cfg["enabled"] or not cfg["ids"]:
+        return
+
+    source  = cfg["source"]
+    msg_ids = cfg["ids"]
+
+    # Primary: batch copy as album
+    try:
+        await bot.copy_messages(
+            chat_id=chat_id,
+            from_chat_id=source,
+            message_ids=msg_ids,
+        )
+        return
+    except Exception:
+        logger.exception("copy_messages() failed for start demo — falling back to individual sends")
+
+    # Fallback: one-by-one
+    for message_id in msg_ids:
+        try:
+            await bot.copy_message(
+                chat_id=chat_id,
+                from_chat_id=source,
+                message_id=message_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to copy start demo message %s from channel %s", message_id, source
+            )
+        await asyncio.sleep(0.25)
+
+
+# ── Plan demo video sender ────────────────────────────────────────────────────
 
 async def send_demo_videos(bot: Bot, chat_id: int, plan: dict) -> None:
     """
@@ -95,6 +136,9 @@ async def cmd_start(message: Message, bot: Bot) -> None:
     if is_new:
         await log_new_user(bot, user.id, user.first_name, user.username)
 
+    # Send start demo videos (if enabled by admin) — always, regardless of plans
+    await send_start_demo_videos(bot, message.chat.id)
+
     plans = await get_all_plans()
 
     if not plans:
@@ -102,9 +146,6 @@ async def cmd_start(message: Message, bot: Bot) -> None:
         await message.answer(welcome_text)
         await message.answer(NO_PLANS_TEXT)
         return
-
-    # Send demo videos from the first plan
-    await send_demo_videos(bot, message.chat.id, plans[0])
     welcome_text = (await get_setting("welcome_message")) or _DEFAULT_WELCOME
     await message.answer(welcome_text)
     await message.answer(

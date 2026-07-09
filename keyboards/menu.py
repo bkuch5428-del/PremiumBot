@@ -18,6 +18,9 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📝 Edit Plan Buy Message", callback_data="admin_buymsg"),
             ],
             [
+                InlineKeyboardButton(text="📹 Start Demo Settings", callback_data="admin_startdemo"),
+            ],
+            [
                 InlineKeyboardButton(text="📊 Statistics", callback_data="admin_stats"),
                 InlineKeyboardButton(text="📢 Broadcast",  callback_data="admin_broadcast"),
             ],
@@ -96,6 +99,33 @@ def admin_demo_done_keyboard(count: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(
                 text=f"✅ Done ({count} video{'s' if count != 1 else ''} collected)",
                 callback_data="admin_demo_done",
+            )],
+            [InlineKeyboardButton(text="❌ Cancel", callback_data="admin_cancel")],
+        ]
+    )
+
+
+def start_demo_settings_keyboard(enabled: bool) -> InlineKeyboardMarkup:
+    """Sub-menu for Start Demo Settings."""
+    status = "✅ Enabled" if enabled else "🚫 Disabled"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"Status: {status}", callback_data="admin_sd_noop")],
+            [InlineKeyboardButton(text="✅ Enable",  callback_data="admin_sd_enable")],
+            [InlineKeyboardButton(text="🚫 Disable", callback_data="admin_sd_disable")],
+            [InlineKeyboardButton(text="🔄 Change Start Demo Videos", callback_data="admin_sd_change")],
+            [InlineKeyboardButton(text="⬅️ Back", callback_data="admin_cancel")],
+        ]
+    )
+
+
+def start_demo_done_keyboard(count: int) -> InlineKeyboardMarkup:
+    """Shown while admin is forwarding start demo videos."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"✅ Done ({count} video{'s' if count != 1 else ''} collected)",
+                callback_data="admin_sd_done",
             )],
             [InlineKeyboardButton(text="❌ Cancel", callback_data="admin_cancel")],
         ]

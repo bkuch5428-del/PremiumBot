@@ -85,10 +85,13 @@ async def init_db() -> None:
     # Seed default settings only if they don't already exist —
     # existing admin-edited values are never overwritten.
     _defaults = [
-        ("welcome_message", _DEFAULT_WELCOME),
-        ("payment_message", _DEFAULT_PAYMENT),
-        ("qr_image", ""),          # falls back to QR_IMAGE_URL env var when empty
-        ("support_group_url", ""),  # falls back to SUPPORT_GROUP_URL env var when empty
+        ("welcome_message",    _DEFAULT_WELCOME),
+        ("payment_message",    _DEFAULT_PAYMENT),
+        ("qr_image",           ""),   # falls back to QR_IMAGE_URL env var when empty
+        ("support_group_url",  ""),   # falls back to SUPPORT_GROUP_URL env var when empty
+        ("start_demo_enabled", "0"),  # disabled until admin explicitly enables
+        ("start_demo_ids",     "[]"), # JSON-encoded list of message IDs
+        ("start_demo_source",  ""),   # source channel for start demo videos
     ]
     for key, value in _defaults:
         await _settings.update_one(
@@ -201,6 +204,28 @@ async def update_plan(plan_id: int, **fields) -> None:
     if fields:
         await _plans.update_one({"_id": plan_id}, {"$set": fields})
     logger.info("Updated plan id=%s fields=%s", plan_id, list(fields.keys()))
+
+
+# ── Start Demo Videos ─────────────────────────────────────────────────────────
+
+async def get_start_demo() -> dict:
+    """Return start demo config: {enabled: bool, ids: list[int], source: str}."""
+    import json
+    enabled = (await get_setting("start_demo_enabled")) == "1"
+    raw_ids = (await get_setting("start_demo_ids")) or "[]"
+    source  = (await get_setting("start_demo_source")) or ""
+    try:
+        ids = [int(x) for x in json.loads(raw_ids)]
+    except Exception:
+        ids = []
+    return {"enabled": enabled, "ids": ids, "source": source}
+
+
+async def set_start_demo_ids(ids: list[int], source_channel_id: str) -> None:
+    """Persist the start demo message IDs and their source channel."""
+    import json
+    await set_setting("start_demo_ids", json.dumps(ids))
+    await set_setting("start_demo_source", source_channel_id)
 
 
 async def delete_plan(plan_id: int) -> None:

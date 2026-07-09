@@ -5,11 +5,13 @@ State machine is kept in module-level dicts (no FSM storage needed in main.py).
 
 Steps
 ─────
-add:name       → add:price → add:validity → add:demo → add:access → add:confirm
-edit:select    → edit:field → edit:value
-delete:select  → delete:confirm
-demo:select    → demo:videos  (admin sends media, clicks Done)
-link:select    → link:value
+add:name         → add:price → add:validity → add:demo → add:access → add:confirm
+edit:select      → edit:field → edit:value
+delete:select    → delete:confirm
+demo:select      → demo:videos  (admin sends media, clicks Done)
+link:select      → link:value
+buymsg:select    → buymsg:value
+startdemo:videos (admin forwards from demo channel, clicks Done)
 broadcast:msg
 """
 
@@ -32,6 +34,10 @@ from database import (
     get_stats,
     get_pending_orders,
     get_all_user_ids,
+    get_setting,
+    set_setting,
+    get_start_demo,
+    set_start_demo_ids,
 )
 from keyboards.menu import (
     admin_panel_keyboard,
@@ -41,6 +47,8 @@ from keyboards.menu import (
     admin_demo_done_keyboard,
     admin_confirm_save_keyboard,
     main_menu_keyboard,
+    start_demo_settings_keyboard,
+    start_demo_done_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -689,6 +697,179 @@ async def handle_demo_videos_media(message: Message) -> None:
         )
     except Exception:
         pass
+
+
+# ── Start Demo Settings ───────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "admin_startdemo")
+async def cb_startdemo_panel(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    _state.pop(call.from_user.id, None)
+    cfg = await get_start_demo()
+    ids = cfg["ids"]
+    status_line = (
+        f"📹 <b>Start Demo Settings</b>\n\n"
+        f"Status: {'✅ Enabled' if cfg['enabled'] else '🚫 Disabled'}\n"
+        f"Videos saved: {len(ids)}\n\n"
+        "Select an option:"
+    )
+    try:
+        await call.message.edit_text(status_line, reply_markup=start_demo_settings_keyboard(cfg["enabled"]))
+    except Exception:
+        await call.message.answer(status_line, reply_markup=start_demo_settings_keyboard(cfg["enabled"]))
+
+
+@router.callback_query(lambda c: c.data == "admin_sd_noop")
+async def cb_sd_noop(call: CallbackQuery) -> None:
+    await call.answer()  # status badge tap — do nothing
+
+
+@router.callback_query(lambda c: c.data == "admin_sd_enable")
+async def cb_sd_enable(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await set_setting("start_demo_enabled", "1")
+    await call.answer("✅ Start demo videos enabled.", show_alert=True)
+    cfg = await get_start_demo()
+    try:
+        await call.message.edit_text(
+            f"📹 <b>Start Demo Settings</b>\n\nStatus: ✅ Enabled\nVideos saved: {len(cfg['ids'])}\n\nSelect an option:",
+            reply_markup=start_demo_settings_keyboard(True),
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(lambda c: c.data == "admin_sd_disable")
+async def cb_sd_disable(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await set_setting("start_demo_enabled", "0")
+    await call.answer("🚫 Start demo videos disabled.", show_alert=True)
+    cfg = await get_start_demo()
+    try:
+        await call.message.edit_text(
+            f"📹 <b>Start Demo Settings</b>\n\nStatus: 🚫 Disabled\nVideos saved: {len(cfg['ids'])}\n\nSelect an option:",
+            reply_markup=start_demo_settings_keyboard(False),
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(lambda c: c.data == "admin_sd_change")
+async def cb_sd_change(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    _state[call.from_user.id] = {"step": "startdemo:videos", "data": {"demo_ids": []}}
+    try:
+        await call.message.edit_text(
+            "📹 <b>Change Start Demo Videos</b>\n\n"
+            f"Forward the start demo videos from the configured Demo Videos Channel "
+            f"(<code>{SOURCE_CHANNEL_ID}</code>).\n\n"
+            "When finished, press <b>✅ Done</b>.",
+            reply_markup=start_demo_done_keyboard(0),
+        )
+    except Exception:
+        await call.message.answer(
+            "📹 <b>Change Start Demo Videos</b>\n\n"
+            f"Forward the start demo videos from the configured Demo Videos Channel "
+            f"(<code>{SOURCE_CHANNEL_ID}</code>).\n\n"
+            "When finished, press <b>✅ Done</b>.",
+            reply_markup=start_demo_done_keyboard(0),
+        )
+
+
+@router.message(_in_state("startdemo:videos"))
+async def handle_startdemo_media(message: Message) -> None:
+    """Accept forwarded messages from the demo videos channel."""
+    if not _is_admin(message.from_user.id):
+        return
+    if message.text and message.text.startswith("/"):
+        return
+
+    st = _state[message.from_user.id]
+
+    fwd_id   = getattr(message, "forward_from_message_id", None)
+    fwd_chat = getattr(message, "forward_from_chat", None)
+
+    if fwd_id is None or fwd_chat is None:
+        await message.answer(
+            "⚠️ Please <b>forward</b> messages directly from the Demo Videos Channel.\n"
+            "Do not upload new files — forward existing messages from the channel."
+        )
+        return
+
+    # Verify the message originates from the configured demo videos channel.
+    # Fail closed: if SOURCE_CHANNEL_ID is not a valid integer, reject all forwards.
+    try:
+        expected_id = int(SOURCE_CHANNEL_ID)
+    except (ValueError, TypeError):
+        await message.answer(
+            "⚠️ The Demo Videos Channel is not configured correctly on this bot.\n"
+            "Please contact the bot owner to set <code>SOURCE_CHANNEL_ID</code>."
+        )
+        return
+
+    if fwd_chat.id != expected_id:
+        await message.answer(
+            f"⚠️ That message is not from the configured Demo Videos Channel "
+            f"(<code>{SOURCE_CHANNEL_ID}</code>).\n\n"
+            "Please forward messages only from that channel."
+        )
+        return
+
+    st["data"]["demo_ids"].append(fwd_id)
+    if not st["data"].get("source_channel_id"):
+        st["data"]["source_channel_id"] = str(fwd_chat.id)
+
+    count = len(st["data"]["demo_ids"])
+    try:
+        await message.answer(
+            f"✅ Got it! {count} video{'s' if count != 1 else ''} collected so far.\n"
+            "Forward more, or press <b>✅ Done</b> when finished.",
+            reply_markup=start_demo_done_keyboard(count),
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(lambda c: c.data == "admin_sd_done")
+async def cb_sd_done(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    st = _state.get(call.from_user.id)
+    if not st or st.get("step") != "startdemo:videos":
+        await call.answer("No active wizard.", show_alert=True)
+        return
+
+    ids = st["data"].get("demo_ids", [])
+    if not ids:
+        await call.answer(
+            "⚠️ No videos collected yet. Forward at least one message from the channel.",
+            show_alert=True,
+        )
+        return
+
+    source = st["data"].get("source_channel_id") or SOURCE_CHANNEL_ID
+    _state.pop(call.from_user.id, None)
+    await call.answer()
+
+    await set_start_demo_ids(ids, source)
+    count = len(ids)
+    await call.message.edit_text(
+        f"✅ <b>Start demo videos updated!</b>\n\n"
+        f"{count} video{'s' if count != 1 else ''} saved.\n\n"
+        "They will be sent to users on /start when the feature is enabled.",
+        reply_markup=admin_panel_keyboard(),
+    )
 
 
 # ── Edit Plan Buy Message ─────────────────────────────────────────────────────
