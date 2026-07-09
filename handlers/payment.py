@@ -124,8 +124,8 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         logger.warning("payment_message template is malformed — using default")
         payment_msg = _default_tpl.format(**_fmt_kwargs)
 
-    # QR image: DB setting first (file_id), then env var URL, then skip
-    qr_image = (await get_setting("qr_image")) or QR_IMAGE_URL
+    # QR image: per-plan first, then global DB setting, then env var URL, then skip
+    qr_image = plan.get("qr_image") or (await get_setting("qr_image")) or QR_IMAGE_URL
     if qr_image:
         try:
             await bot.send_photo(chat_id=call.message.chat.id, photo=qr_image)

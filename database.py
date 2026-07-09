@@ -157,6 +157,7 @@ def _plan_doc_to_dict(doc: dict) -> dict:
         "source_channel_id":  doc.get("source_channel_id", ""),
         "access_link":        doc.get("access_link", ""),
         "buy_message":        doc.get("buy_message", ""),
+        "qr_image":           doc.get("qr_image", ""),
         "created_at":         doc.get("created_at"),
     }
 

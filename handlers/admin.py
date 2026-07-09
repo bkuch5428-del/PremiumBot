@@ -872,6 +872,77 @@ async def cb_sd_done(call: CallbackQuery) -> None:
     )
 
 
+# ── Edit Plan QR ─────────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "admin_planqr")
+async def cb_planqr_start(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    plans = await get_all_plans()
+    if not plans:
+        await call.message.edit_text(
+            "💳 <b>Edit Plan QR</b>\n\nNo plans found.",
+            reply_markup=admin_panel_keyboard(),
+        )
+        return
+    _state[call.from_user.id] = {"step": "planqr:select", "data": {}}
+    await call.message.edit_text(
+        "💳 <b>Edit Plan QR</b>\n\nSelect a plan:",
+        reply_markup=admin_plan_list_keyboard(plans, "admin_pq"),
+    )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin_pq:"))
+async def cb_planqr_plan_selected(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    try:
+        plan_id = int(call.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await call.answer("⚠️ Invalid plan.", show_alert=True)
+        return
+    await call.answer()
+    plan = await get_plan(plan_id)
+    if not plan:
+        await call.answer("Plan not found.", show_alert=True)
+        return
+    _state[call.from_user.id] = {"step": "planqr:photo", "data": {"plan_id": plan_id}}
+    has_qr = bool(plan.get("qr_image"))
+    await call.message.edit_text(
+        f"💳 <b>Edit Plan QR: {plan['name']}</b>\n\n"
+        f"Current QR: {'✅ Set' if has_qr else '⬜ Not set'}\n\n"
+        "Send the new QR image for this plan.",
+        reply_markup=None,
+    )
+
+
+@router.message(_in_state("planqr:photo"), F.photo)
+async def handle_planqr_photo(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    st = _state.pop(message.from_user.id, None)
+    if not st:
+        return
+    plan_id = st["data"]["plan_id"]
+    file_id = message.photo[-1].file_id
+    await update_plan(plan_id, qr_image=file_id)
+    await message.answer(
+        "✅ QR updated successfully.",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+
+@router.message(_in_state("planqr:photo"))
+async def handle_planqr_wrong_type(message: Message) -> None:
+    """Catch non-photo messages when planqr:photo step is active."""
+    if not _is_admin(message.from_user.id) or (message.text or "").startswith("/"):
+        return
+    await message.answer("⚠️ Please send a <b>photo</b> of the QR code.")
+
+
 # ── Edit Plan Buy Message ─────────────────────────────────────────────────────
 
 @router.callback_query(lambda c: c.data == "admin_buymsg")

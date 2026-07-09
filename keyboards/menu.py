@@ -16,6 +16,7 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="📝 Edit Plan Buy Message", callback_data="admin_buymsg"),
+                InlineKeyboardButton(text="💳 Edit Plan QR",          callback_data="admin_planqr"),
             ],
             [
                 InlineKeyboardButton(text="📹 Start Demo Settings", callback_data="admin_startdemo"),
