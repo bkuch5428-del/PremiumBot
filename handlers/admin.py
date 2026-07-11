@@ -1071,39 +1071,75 @@ async def handle_rm_second_delay(message: Message) -> None:
     )
 
 
-@router.callback_query(lambda c: c.data == "admin_rm_message")
-async def cb_rm_message_start(call: CallbackQuery) -> None:
+def _reminder_message_prompt(title: str, current: str) -> str:
+    preview = html.escape(current) if current else "(not set — using default)"
+    return (
+        f"✏️ <b>{title}</b>\n\n"
+        "<b>Current message</b> (shown escaped/raw below):\n"
+        f"<pre>{preview}</pre>\n\n"
+        "Send the new message. You can use these placeholders — they'll be "
+        "filled in automatically:\n"
+        "<code>{plan_name}</code>  <code>{plan_price}</code>  <code>{plan_validity}</code>\n\n"
+        "A 💳 Buy Now button is always attached automatically for the exact plan "
+        "the reminder was sent for — it cannot be edited or removed.\n\n"
+        "HTML formatting is supported. Type /cancel to abort."
+    )
+
+
+@router.callback_query(lambda c: c.data == "admin_rm_msg15")
+async def cb_rm_msg15_start(call: CallbackQuery) -> None:
     if not _is_admin(call.from_user.id):
         await call.answer("⛔ Unauthorised.", show_alert=True)
         return
     await call.answer()
-    _state[call.from_user.id] = {"step": "reminder:message", "data": {}}
-    current = await get_setting("reminder_message", "")
-    preview = html.escape(current) if current else "(not set — using default)"
+    _state[call.from_user.id] = {"step": "reminder:message_15", "data": {}}
+    current = await get_setting("reminder_first_message", "")
     await call.message.edit_text(
-        "✏️ <b>Reminder Message</b>\n\n"
-        "<b>Current message</b> (shown escaped/raw below):\n"
-        f"<pre>{preview}</pre>\n\n"
-        "Send the new reminder message. It is used for both the first and final "
-        "reminder. You can use these placeholders — they'll be filled in "
-        "automatically:\n"
-        "<code>{plan_name}</code>  <code>{plan_price}</code>  <code>{plan_validity}</code>\n\n"
-        "HTML formatting is supported. Type /cancel to abort.",
+        _reminder_message_prompt("15 Minute Reminder Message", current),
         reply_markup=None,
     )
 
 
-@router.message(_in_state("reminder:message"), F.text)
-async def handle_rm_message(message: Message) -> None:
+@router.message(_in_state("reminder:message_15"), F.text)
+async def handle_rm_msg15(message: Message) -> None:
     if not _is_admin(message.from_user.id):
         return
     text = (message.text or "").strip()
     if text.startswith("/"):
         return
     _state.pop(message.from_user.id, None)
-    await set_setting("reminder_message", text)
+    await set_setting("reminder_first_message", text)
     await message.answer(
-        "✅ Reminder message updated.",
+        "✅ 15 minute reminder message updated.",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+
+@router.callback_query(lambda c: c.data == "admin_rm_msg24")
+async def cb_rm_msg24_start(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    _state[call.from_user.id] = {"step": "reminder:message_24", "data": {}}
+    current = await get_setting("reminder_second_message", "")
+    await call.message.edit_text(
+        _reminder_message_prompt("24 Hour Reminder Message", current),
+        reply_markup=None,
+    )
+
+
+@router.message(_in_state("reminder:message_24"), F.text)
+async def handle_rm_msg24(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    text = (message.text or "").strip()
+    if text.startswith("/"):
+        return
+    _state.pop(message.from_user.id, None)
+    await set_setting("reminder_second_message", text)
+    await message.answer(
+        "✅ 24 hour reminder message updated.",
         reply_markup=admin_panel_keyboard(),
     )
 

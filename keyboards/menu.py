@@ -141,8 +141,22 @@ def reminder_settings_keyboard(enabled: bool) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🚫 Disable", callback_data="admin_rm_disable")],
             [InlineKeyboardButton(text="⏱ Edit First Reminder Delay",   callback_data="admin_rm_first")],
             [InlineKeyboardButton(text="🕒 Edit Second Reminder Delay", callback_data="admin_rm_second")],
-            [InlineKeyboardButton(text="✏️ Edit Reminder Message",      callback_data="admin_rm_message")],
+            [InlineKeyboardButton(text="✏ Edit 15 Minute Reminder Message", callback_data="admin_rm_msg15")],
+            [InlineKeyboardButton(text="✏ Edit 24 Hour Reminder Message",   callback_data="admin_rm_msg24")],
             [InlineKeyboardButton(text="⬅️ Back", callback_data="admin_cancel")],
+        ]
+    )
+
+
+def reminder_buy_now_keyboard(plan_id: int) -> InlineKeyboardMarkup:
+    """
+    Fixed, non-editable button attached to every reminder message. Reuses the
+    same buy:{plan_id} callback as the normal Buy Now flow, so tapping it
+    resumes payment for the exact plan the reminder was scheduled for.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Buy Now", callback_data=f"buy:{plan_id}")],
         ]
     )
 

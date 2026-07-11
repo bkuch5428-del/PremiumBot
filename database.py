@@ -70,12 +70,20 @@ _DEFAULT_PAYMENT = (
     "🆔 <b>Order:</b> #{order_id}"
 )
 
-_DEFAULT_REMINDER_MESSAGE = (
+_DEFAULT_REMINDER_FIRST_MESSAGE = (
     "🔔 <b>Reminder</b>\n\n"
     "You still haven't completed payment for <b>{plan_name}</b>.\n\n"
     "💰 <b>Price:</b> ₹{plan_price}\n"
     "⏳ <b>Validity:</b> {plan_validity}\n\n"
-    "Tap <b>Buy Now</b> again and complete your payment to activate your plan!"
+    "Tap <b>Buy Now</b> below and complete your payment to activate your plan!"
+)
+
+_DEFAULT_REMINDER_SECOND_MESSAGE = (
+    "🔔 <b>Last Chance!</b>\n\n"
+    "Your payment for <b>{plan_name}</b> is still incomplete.\n\n"
+    "💰 <b>Price:</b> ₹{plan_price}\n"
+    "⏳ <b>Validity:</b> {plan_validity}\n\n"
+    "Tap <b>Buy Now</b> below before this offer slips away!"
 )
 
 
@@ -123,7 +131,8 @@ async def init_db() -> None:
         ("reminder_enabled",         "1"),  # abandoned-payment reminders on by default
         ("reminder_first_delay_min", "15"),
         ("reminder_second_delay_min", "1440"),  # 24 hours
-        ("reminder_message",        _DEFAULT_REMINDER_MESSAGE),
+        ("reminder_first_message",   _DEFAULT_REMINDER_FIRST_MESSAGE),   # 15-minute reminder
+        ("reminder_second_message",  _DEFAULT_REMINDER_SECOND_MESSAGE),  # 24-hour reminder
     ]
     for key, value in _defaults:
         await _settings.update_one(
@@ -546,6 +555,7 @@ async def get_all_settings() -> dict[str, str]:
 async def set_pending_reminder(
     user_id: int,
     order_id: str,
+    plan_id: int,
     plan_name: str,
     plan_price: str,
     plan_validity: str,
@@ -555,13 +565,15 @@ async def set_pending_reminder(
     """
     Create or replace the reminder schedule for a user (one active schedule
     per user — a repeat Buy Now replaces the previous schedule instead of
-    creating a duplicate).
+    creating a duplicate). plan_id is kept so the reminder's Buy Now button
+    can resume the flow for the exact plan it was scheduled for.
     """
     await _reminders.replace_one(
         {"_id": user_id},
         {
             "_id":           user_id,
             "order_id":      order_id,
+            "plan_id":       plan_id,
             "plan_name":     plan_name,
             "plan_price":    plan_price,
             "plan_validity": plan_validity,

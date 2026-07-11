@@ -171,6 +171,7 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
     await set_pending_reminder(
         user_id=user.id,
         order_id=order_id,
+        plan_id=plan_id,
         plan_name=plan["name"],
         plan_price=plan["price"],
         plan_validity=plan["validity"],

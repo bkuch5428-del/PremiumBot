@@ -27,21 +27,30 @@ from database import (
     mark_first_reminder_sent,
     mark_second_reminder_sent,
 )
+from keyboards.menu import reminder_buy_now_keyboard
 
 logger = logging.getLogger(__name__)
 
 CHECK_INTERVAL_SECONDS = 30
 
-_DEFAULT_REMINDER_MESSAGE = (
+_DEFAULT_REMINDER_FIRST_MESSAGE = (
     "🔔 <b>Reminder</b>\n\n"
     "You still haven't completed payment for <b>{plan_name}</b>.\n\n"
     "💰 <b>Price:</b> ₹{plan_price}\n"
     "⏳ <b>Validity:</b> {plan_validity}\n\n"
-    "Tap <b>Buy Now</b> again and complete your payment to activate your plan!"
+    "Tap <b>Buy Now</b> below and complete your payment to activate your plan!"
+)
+
+_DEFAULT_REMINDER_SECOND_MESSAGE = (
+    "🔔 <b>Last Chance!</b>\n\n"
+    "Your payment for <b>{plan_name}</b> is still incomplete.\n\n"
+    "💰 <b>Price:</b> ₹{plan_price}\n"
+    "⏳ <b>Validity:</b> {plan_validity}\n\n"
+    "Tap <b>Buy Now</b> below before this offer slips away!"
 )
 
 
-def _render(template: str, doc: dict) -> str:
+def _render(template: str, doc: dict, default: str) -> str:
     kwargs = dict(
         plan_name=doc.get("plan_name", ""),
         plan_price=doc.get("plan_price", ""),
@@ -50,8 +59,8 @@ def _render(template: str, doc: dict) -> str:
     try:
         return template.format(**kwargs)
     except (KeyError, IndexError, ValueError):
-        logger.warning("reminder_message template is malformed — using default")
-        return _DEFAULT_REMINDER_MESSAGE.format(**kwargs)
+        logger.warning("reminder message template is malformed — using default")
+        return default.format(**kwargs)
 
 
 async def run(bot: Bot) -> None:
@@ -71,13 +80,19 @@ async def _tick(bot: Bot) -> None:
         return
 
     now = datetime.now(timezone.utc)
-    template = (await get_setting("reminder_message")) or _DEFAULT_REMINDER_MESSAGE
+    first_template = (await get_setting("reminder_first_message")) or _DEFAULT_REMINDER_FIRST_MESSAGE
+    second_template = (await get_setting("reminder_second_message")) or _DEFAULT_REMINDER_SECOND_MESSAGE
 
     for doc in await get_due_first_reminders(now):
         user_id = doc["_id"]
         order_id = doc.get("order_id")
+        plan_id = doc.get("plan_id")
         try:
-            await bot.send_message(chat_id=user_id, text=_render(template, doc))
+            await bot.send_message(
+                chat_id=user_id,
+                text=_render(first_template, doc, _DEFAULT_REMINDER_FIRST_MESSAGE),
+                reply_markup=reminder_buy_now_keyboard(plan_id) if plan_id is not None else None,
+            )
         except Exception:
             logger.warning("Failed to send first reminder to user %s", user_id)
         # Mark sent regardless of delivery outcome — a blocked/invalid chat
@@ -88,8 +103,13 @@ async def _tick(bot: Bot) -> None:
     for doc in await get_due_second_reminders(now):
         user_id = doc["_id"]
         order_id = doc.get("order_id")
+        plan_id = doc.get("plan_id")
         try:
-            await bot.send_message(chat_id=user_id, text=_render(template, doc))
+            await bot.send_message(
+                chat_id=user_id,
+                text=_render(second_template, doc, _DEFAULT_REMINDER_SECOND_MESSAGE),
+                reply_markup=reminder_buy_now_keyboard(plan_id) if plan_id is not None else None,
+            )
         except Exception:
             logger.warning("Failed to send final reminder to user %s", user_id)
         await mark_second_reminder_sent(user_id, order_id)
