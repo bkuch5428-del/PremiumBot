@@ -81,6 +81,14 @@ def admin_edit_fields_keyboard(plan_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="💰 Price",        callback_data=f"admin_ef:{plan_id}:price")],
             [InlineKeyboardButton(text="⏳ Validity",     callback_data=f"admin_ef:{plan_id}:validity")],
             [InlineKeyboardButton(text="🔗 Access Link",  callback_data=f"admin_ef:{plan_id}:access_link")],
+            [
+                InlineKeyboardButton(text="⬆ Move Up",   callback_data=f"admin_mv:up:{plan_id}"),
+                InlineKeyboardButton(text="⬇ Move Down", callback_data=f"admin_mv:down:{plan_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="⏫ Move to Top",    callback_data=f"admin_mv:top:{plan_id}"),
+                InlineKeyboardButton(text="⏬ Move to Bottom", callback_data=f"admin_mv:bottom:{plan_id}"),
+            ],
             [InlineKeyboardButton(text="❌ Cancel",       callback_data="admin_cancel")],
         ]
     )

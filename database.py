@@ -22,6 +22,7 @@ import os
 from datetime import datetime, timezone, timedelta
 
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import UpdateOne
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,22 @@ async def init_db() -> None:
     await _reminders.create_index("first_due")
     await _reminders.create_index("second_due")
 
+    # Backfill sort_order for legacy plans (created before plan ordering
+    # existed) so every plan has one, without disturbing admin-set orders.
+    await _ensure_plan_sort_order()
+
+    # Make sure the plan sort-order counter starts at least past the highest
+    # sort_order already in use, so newly-created plans can never collide
+    # with an existing position. $max is idempotent/safe if init_db runs
+    # concurrently (e.g. multiple workers starting up at once).
+    top_plan = await _plans.find_one({}, sort=[("sort_order", -1)])
+    seed = (top_plan["sort_order"] + 1) if top_plan else 0
+    await _counters.update_one(
+        {"_id": "plan_sort_order"},
+        {"$max": {"seq": seed}},
+        upsert=True,
+    )
+
     # Seed default settings only if they don't already exist —
     # existing admin-edited values are never overwritten.
     _defaults = [
@@ -129,6 +146,21 @@ async def _next_plan_id() -> int:
     """Atomically increment and return the next integer plan id."""
     doc = await _counters.find_one_and_update(
         {"_id": "plans"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True,
+    )
+    return doc["seq"]
+
+
+async def _next_plan_sort_order() -> int:
+    """
+    Atomically increment and return the next sort_order value, used to append
+    newly-created plans at the end of the display order without racing other
+    concurrent plan creations.
+    """
+    doc = await _counters.find_one_and_update(
+        {"_id": "plan_sort_order"},
         {"$inc": {"seq": 1}},
         upsert=True,
         return_document=True,
@@ -173,8 +205,26 @@ def _plan_doc_to_dict(doc: dict) -> dict:
         "access_link":        doc.get("access_link", ""),
         "buy_message":        doc.get("buy_message", ""),
         "qr_image":           doc.get("qr_image", ""),
+        "sort_order":         doc.get("sort_order", 0),
         "created_at":         doc.get("created_at"),
     }
+
+
+async def _ensure_plan_sort_order() -> None:
+    """
+    Backfill the `sort_order` field for legacy plans that don't have it yet
+    (ordered by their original creation order, i.e. _id). Idempotent and
+    never touches plans that already have a sort_order.
+    """
+    cursor = _plans.find({"sort_order": {"$exists": False}}).sort("_id", 1)
+    missing_ids = [doc["_id"] async for doc in cursor]
+    if not missing_ids:
+        return
+    top = await _plans.find_one({"sort_order": {"$exists": True}}, sort=[("sort_order", -1)])
+    next_order = (top["sort_order"] + 1) if top else 0
+    for pid in missing_ids:
+        await _plans.update_one({"_id": pid}, {"$set": {"sort_order": next_order}})
+        next_order += 1
 
 
 async def create_plan(
@@ -185,8 +235,9 @@ async def create_plan(
     source_channel_id: str,
     access_link: str,
 ) -> int:
-    """Insert a new plan. Returns the new plan's id."""
+    """Insert a new plan, appended to the end of the display order. Returns the new plan's id."""
     plan_id = await _next_plan_id()
+    sort_order = await _next_plan_sort_order()
     await _plans.insert_one({
         "_id":               plan_id,
         "name":              name,
@@ -195,6 +246,7 @@ async def create_plan(
         "demo_message_ids":  list(demo_message_ids or []),
         "source_channel_id": source_channel_id,
         "access_link":       access_link,
+        "sort_order":        sort_order,
         "created_at":        datetime.now(timezone.utc),
     })
     logger.info("Created plan id=%s name=%r", plan_id, name)
@@ -202,8 +254,8 @@ async def create_plan(
 
 
 async def get_all_plans() -> list[dict]:
-    """Return all plans as a list of dicts, ordered by id."""
-    cursor = _plans.find({}).sort("_id", 1)
+    """Return all plans as a list of dicts, ordered by their display order."""
+    cursor = _plans.find({}).sort([("sort_order", 1), ("_id", 1)])
     return [_plan_doc_to_dict(doc) async for doc in cursor]
 
 
@@ -220,6 +272,86 @@ async def update_plan(plan_id: int, **fields) -> None:
     if fields:
         await _plans.update_one({"_id": plan_id}, {"$set": fields})
     logger.info("Updated plan id=%s fields=%s", plan_id, list(fields.keys()))
+
+
+# ── Plan ordering ─────────────────────────────────────────────────────────────
+
+async def _ordered_plan_ids() -> list[int]:
+    """Return all plan ids in current display order."""
+    cursor = _plans.find({}, {"_id": 1}).sort([("sort_order", 1), ("_id", 1)])
+    return [doc["_id"] async for doc in cursor]
+
+
+async def _persist_plan_order(ordered_ids: list[int]) -> None:
+    """
+    Persist sort_order = position for every plan in ordered_ids in a single
+    bulk write, so the whole reorder lands as one round trip instead of many
+    sequential update_one calls that could interleave with a concurrent
+    reorder from another admin.
+    """
+    if not ordered_ids:
+        return
+    ops = [
+        UpdateOne({"_id": pid}, {"$set": {"sort_order": index}})
+        for index, pid in enumerate(ordered_ids)
+    ]
+    await _plans.bulk_write(ops, ordered=True)
+
+
+async def move_plan_up(plan_id: int) -> bool:
+    """Swap the plan with the one immediately above it. Returns True if moved."""
+    ids = await _ordered_plan_ids()
+    if plan_id not in ids:
+        return False
+    idx = ids.index(plan_id)
+    if idx == 0:
+        return False
+    ids[idx - 1], ids[idx] = ids[idx], ids[idx - 1]
+    await _persist_plan_order(ids)
+    logger.info("Moved plan id=%s up", plan_id)
+    return True
+
+
+async def move_plan_down(plan_id: int) -> bool:
+    """Swap the plan with the one immediately below it. Returns True if moved."""
+    ids = await _ordered_plan_ids()
+    if plan_id not in ids:
+        return False
+    idx = ids.index(plan_id)
+    if idx >= len(ids) - 1:
+        return False
+    ids[idx + 1], ids[idx] = ids[idx], ids[idx + 1]
+    await _persist_plan_order(ids)
+    logger.info("Moved plan id=%s down", plan_id)
+    return True
+
+
+async def move_plan_to_top(plan_id: int) -> bool:
+    """Move the plan to the first position. Returns True if it actually moved."""
+    ids = await _ordered_plan_ids()
+    if plan_id not in ids:
+        return False
+    if ids.index(plan_id) == 0:
+        return False  # already at the top — nothing to persist
+    ids.remove(plan_id)
+    ids.insert(0, plan_id)
+    await _persist_plan_order(ids)
+    logger.info("Moved plan id=%s to top", plan_id)
+    return True
+
+
+async def move_plan_to_bottom(plan_id: int) -> bool:
+    """Move the plan to the last position. Returns True if it actually moved."""
+    ids = await _ordered_plan_ids()
+    if plan_id not in ids:
+        return False
+    if ids.index(plan_id) == len(ids) - 1:
+        return False  # already at the bottom — nothing to persist
+    ids.remove(plan_id)
+    ids.append(plan_id)
+    await _persist_plan_order(ids)
+    logger.info("Moved plan id=%s to bottom", plan_id)
+    return True
 
 
 # ── Start Demo Videos ─────────────────────────────────────────────────────────

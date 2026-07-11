@@ -39,6 +39,10 @@ from database import (
     set_setting,
     get_start_demo,
     set_start_demo_ids,
+    move_plan_up,
+    move_plan_down,
+    move_plan_to_top,
+    move_plan_to_bottom,
 )
 from keyboards.menu import (
     admin_panel_keyboard,
@@ -527,6 +531,50 @@ async def cb_edit_plan_selected(call: CallbackQuery) -> None:
         f"✏️ <b>Edit Plan:</b> {plan['name']}\n\nSelect a field to edit:",
         reply_markup=admin_edit_fields_keyboard(plan_id),
     )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin_mv:"))
+async def cb_move_plan(call: CallbackQuery) -> None:
+    """Reorder a plan: admin_mv:{up|down|top|bottom}:{plan_id}."""
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    try:
+        _, action, plan_id_str = call.data.split(":", 2)
+        plan_id = int(plan_id_str)
+    except (ValueError, IndexError):
+        await call.answer("⚠️ Invalid request.", show_alert=True)
+        return
+
+    mover = {
+        "up":     move_plan_up,
+        "down":   move_plan_down,
+        "top":    move_plan_to_top,
+        "bottom": move_plan_to_bottom,
+    }.get(action)
+    if mover is None:
+        await call.answer("⚠️ Invalid request.", show_alert=True)
+        return
+
+    moved = await mover(plan_id)
+
+    plan = await get_plan(plan_id)
+    if not plan:
+        await call.answer("Plan not found.", show_alert=True)
+        return
+
+    if moved:
+        await call.answer("✅ Order updated.")
+    else:
+        await call.answer("Already at that position.")
+
+    try:
+        await call.message.edit_text(
+            f"✏️ <b>Edit Plan:</b> {plan['name']}\n\nSelect a field to edit:",
+            reply_markup=admin_edit_fields_keyboard(plan_id),
+        )
+    except Exception:
+        pass
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("admin_ef:"))
