@@ -18,7 +18,16 @@ from aiogram import Router, Bot, F
 from aiogram.types import Message, CallbackQuery
 
 from config import QR_IMAGE_URL, PAYMENT_REVIEW_CHANNEL_ID, ADMIN_IDS
-from database import create_order, update_order_status, approve_order, get_plan, get_all_plans, get_setting
+from database import (
+    create_order,
+    update_order_status,
+    approve_order,
+    get_plan,
+    get_all_plans,
+    get_setting,
+    set_pending_reminder,
+    cancel_reminder,
+)
 from keyboards.menu import (
     payment_details_keyboard,
     await_proof_keyboard,
@@ -143,6 +152,32 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         "access_link":  plan["access_link"],
     }
 
+    # Schedule abandoned-payment reminders — replaces any previous schedule
+    # for this user instead of stacking duplicates.
+    _MAX_REMINDER_DELAY_MIN = 525600  # 1 year — matches the admin input cap; guards timedelta()
+
+    def _clamped_delay(raw: str, fallback: int) -> int:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return fallback
+        if value <= 0:
+            return fallback
+        return min(value, _MAX_REMINDER_DELAY_MIN)
+
+    first_min = _clamped_delay(await get_setting("reminder_first_delay_min", "15"), 15)
+    second_min = _clamped_delay(await get_setting("reminder_second_delay_min", "1440"), 1440)
+    now = datetime.now(timezone.utc)
+    await set_pending_reminder(
+        user_id=user.id,
+        order_id=order_id,
+        plan_name=plan["name"],
+        plan_price=plan["price"],
+        plan_validity=plan["validity"],
+        first_due=now + timedelta(minutes=first_min),
+        second_due=now + timedelta(minutes=second_min),
+    )
+
 
 # ── I Have Paid ───────────────────────────────────────────────────────────────
 
@@ -174,6 +209,7 @@ async def callback_cancel_order(call: CallbackQuery) -> None:
     order_id = call.data.split(":", 1)[1]
     await update_order_status(order_id, "cancelled")
     _awaiting_proof.pop(call.from_user.id, None)
+    await cancel_reminder(call.from_user.id, order_id)
 
     plans = await get_all_plans()
     await call.message.answer(
@@ -190,6 +226,9 @@ async def callback_cancel_proof(call: CallbackQuery) -> None:
     info = _awaiting_proof.pop(call.from_user.id, None)
     if info:
         await update_order_status(info["order_id"], "cancelled")
+        await cancel_reminder(call.from_user.id, info["order_id"])
+    else:
+        await cancel_reminder(call.from_user.id)
 
     plans = await get_all_plans()
     await call.message.answer(
@@ -330,6 +369,7 @@ async def callback_reject(call: CallbackQuery, bot: Bot) -> None:
             # "🆔 User ID: 123456" or with code tags
             uid_str = uid_line.split(":")[-1].strip().strip("<code>").strip("</code>")
             user_id = int(uid_str)
+            await cancel_reminder(user_id, order_id)
             await bot.send_message(
                 chat_id=user_id,
                 text=(

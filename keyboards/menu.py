@@ -22,6 +22,9 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📹 Start Demo Settings", callback_data="admin_startdemo"),
             ],
             [
+                InlineKeyboardButton(text="🔔 Payment Reminder Settings", callback_data="admin_reminders"),
+            ],
+            [
                 InlineKeyboardButton(text="📊 Statistics", callback_data="admin_stats"),
                 InlineKeyboardButton(text="📢 Broadcast",  callback_data="admin_broadcast"),
             ],
@@ -115,6 +118,22 @@ def start_demo_settings_keyboard(enabled: bool) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="✅ Enable",  callback_data="admin_sd_enable")],
             [InlineKeyboardButton(text="🚫 Disable", callback_data="admin_sd_disable")],
             [InlineKeyboardButton(text="🔄 Change Start Demo Videos", callback_data="admin_sd_change")],
+            [InlineKeyboardButton(text="⬅️ Back", callback_data="admin_cancel")],
+        ]
+    )
+
+
+def reminder_settings_keyboard(enabled: bool) -> InlineKeyboardMarkup:
+    """Sub-menu for Payment Reminder Settings."""
+    status = "✅ Enabled" if enabled else "🚫 Disabled"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"Status: {status}", callback_data="admin_rm_noop")],
+            [InlineKeyboardButton(text="✅ Enable",  callback_data="admin_rm_enable")],
+            [InlineKeyboardButton(text="🚫 Disable", callback_data="admin_rm_disable")],
+            [InlineKeyboardButton(text="⏱ Edit First Reminder Delay",   callback_data="admin_rm_first")],
+            [InlineKeyboardButton(text="🕒 Edit Second Reminder Delay", callback_data="admin_rm_second")],
+            [InlineKeyboardButton(text="✏️ Edit Reminder Message",      callback_data="admin_rm_message")],
             [InlineKeyboardButton(text="⬅️ Back", callback_data="admin_cancel")],
         ]
     )

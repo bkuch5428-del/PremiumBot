@@ -44,6 +44,7 @@ _plans = _db["plans"]
 _orders = _db["orders"]
 _settings = _db["settings"]
 _counters = _db["counters"]
+_reminders = _db["reminders"]
 
 
 # ── Settings defaults (seeded once; admin can change via /admin → Settings) ───
@@ -68,6 +69,14 @@ _DEFAULT_PAYMENT = (
     "🆔 <b>Order:</b> #{order_id}"
 )
 
+_DEFAULT_REMINDER_MESSAGE = (
+    "🔔 <b>Reminder</b>\n\n"
+    "You still haven't completed payment for <b>{plan_name}</b>.\n\n"
+    "💰 <b>Price:</b> ₹{plan_price}\n"
+    "⏳ <b>Validity:</b> {plan_validity}\n\n"
+    "Tap <b>Buy Now</b> again and complete your payment to activate your plan!"
+)
+
 
 # ── Schema / index initialisation ─────────────────────────────────────────────
 
@@ -81,17 +90,23 @@ async def init_db() -> None:
     await _orders.create_index("payment_status")
     await _orders.create_index("user_id")
     await _orders.create_index("subscription_end")
+    await _reminders.create_index("first_due")
+    await _reminders.create_index("second_due")
 
     # Seed default settings only if they don't already exist —
     # existing admin-edited values are never overwritten.
     _defaults = [
-        ("welcome_message",    _DEFAULT_WELCOME),
-        ("payment_message",    _DEFAULT_PAYMENT),
-        ("qr_image",           ""),   # falls back to QR_IMAGE_URL env var when empty
-        ("support_group_url",  ""),   # falls back to SUPPORT_GROUP_URL env var when empty
-        ("start_demo_enabled", "0"),  # disabled until admin explicitly enables
-        ("start_demo_ids",     "[]"), # JSON-encoded list of message IDs
-        ("start_demo_source",  ""),   # source channel for start demo videos
+        ("welcome_message",          _DEFAULT_WELCOME),
+        ("payment_message",          _DEFAULT_PAYMENT),
+        ("qr_image",                 ""),   # falls back to QR_IMAGE_URL env var when empty
+        ("support_group_url",        ""),   # falls back to SUPPORT_GROUP_URL env var when empty
+        ("start_demo_enabled",       "0"),  # disabled until admin explicitly enables
+        ("start_demo_ids",           "[]"), # JSON-encoded list of message IDs
+        ("start_demo_source",        ""),   # source channel for start demo videos
+        ("reminder_enabled",         "1"),  # abandoned-payment reminders on by default
+        ("reminder_first_delay_min", "15"),
+        ("reminder_second_delay_min", "1440"),  # 24 hours
+        ("reminder_message",        _DEFAULT_REMINDER_MESSAGE),
     ]
     for key, value in _defaults:
         await _settings.update_one(
@@ -314,6 +329,12 @@ async def approve_order(order_id: str) -> dict | None:
         return None
 
     logger.info("Order %s approved; sub ends %s", order_id, sub_end.date())
+
+    # Payment is confirmed — cancel the reminder scheduled for THIS order only
+    # (scoped by order_id so a newer schedule from a repeat Buy Now isn't
+    # accidentally wiped if an older order gets approved late).
+    await cancel_reminder(doc["user_id"], order_id)
+
     return {
         "user_id":          doc["user_id"],
         "plan_name":        doc["plan_name"],
@@ -386,6 +407,88 @@ async def get_all_settings() -> dict[str, str]:
     """Return all settings as a plain dict."""
     cursor = _settings.find({})
     return {doc["_id"]: doc.get("value", "") async for doc in cursor}
+
+
+# ── Abandoned Payment Reminders ─────────────────────────────────────────────
+
+async def set_pending_reminder(
+    user_id: int,
+    order_id: str,
+    plan_name: str,
+    plan_price: str,
+    plan_validity: str,
+    first_due: datetime,
+    second_due: datetime,
+) -> None:
+    """
+    Create or replace the reminder schedule for a user (one active schedule
+    per user — a repeat Buy Now replaces the previous schedule instead of
+    creating a duplicate).
+    """
+    await _reminders.replace_one(
+        {"_id": user_id},
+        {
+            "_id":           user_id,
+            "order_id":      order_id,
+            "plan_name":     plan_name,
+            "plan_price":    plan_price,
+            "plan_validity": plan_validity,
+            "first_due":     first_due,
+            "second_due":    second_due,
+            "first_sent":    False,
+            "second_sent":   False,
+            "created_at":    datetime.now(timezone.utc),
+        },
+        upsert=True,
+    )
+    logger.debug("Reminder schedule set for user %s (order %s)", user_id, order_id)
+
+
+async def cancel_reminder(user_id: int, order_id: str | None = None) -> None:
+    """
+    Cancel (delete) the scheduled reminder for a user.
+
+    If order_id is given, only cancel when the stored schedule still belongs
+    to that order — otherwise a newer schedule created by a repeat Buy Now
+    (which replaces by user_id) could be deleted by a stale caller acting on
+    an older order (e.g. approving an old order after the user re-bought).
+    """
+    query: dict = {"_id": user_id}
+    if order_id is not None:
+        query["order_id"] = order_id
+    await _reminders.delete_one(query)
+
+
+async def get_due_first_reminders(now: datetime) -> list[dict]:
+    """Return reminder docs whose first reminder is due and not yet sent."""
+    cursor = _reminders.find({"first_sent": False, "first_due": {"$lte": now}})
+    return [doc async for doc in cursor]
+
+
+async def mark_first_reminder_sent(user_id: int, order_id: str) -> None:
+    """
+    Flag the first reminder as sent, scoped to the order it was scheduled
+    for — if the user replaced the schedule (repeat Buy Now) in the meantime,
+    this is a no-op and the new schedule is left untouched.
+    """
+    await _reminders.update_one(
+        {"_id": user_id, "order_id": order_id},
+        {"$set": {"first_sent": True}},
+    )
+
+
+async def get_due_second_reminders(now: datetime) -> list[dict]:
+    """Return reminder docs whose final reminder is due and not yet sent."""
+    cursor = _reminders.find({"second_sent": False, "second_due": {"$lte": now}})
+    return [doc async for doc in cursor]
+
+
+async def mark_second_reminder_sent(user_id: int, order_id: str) -> None:
+    """
+    The schedule is complete after the final reminder — remove it, scoped to
+    the order it was scheduled for (see mark_first_reminder_sent).
+    """
+    await _reminders.delete_one({"_id": user_id, "order_id": order_id})
 
 
 # ── Statistics ────────────────────────────────────────────────────────────────

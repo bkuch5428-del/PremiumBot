@@ -16,6 +16,7 @@ broadcast:msg
 """
 
 import asyncio
+import html
 import logging
 
 from aiogram import Router, Bot, F
@@ -49,6 +50,7 @@ from keyboards.menu import (
     main_menu_keyboard,
     start_demo_settings_keyboard,
     start_demo_done_keyboard,
+    reminder_settings_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -868,6 +870,192 @@ async def cb_sd_done(call: CallbackQuery) -> None:
         f"✅ <b>Start demo videos updated!</b>\n\n"
         f"{count} video{'s' if count != 1 else ''} saved.\n\n"
         "They will be sent to users on /start when the feature is enabled.",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+
+# ── Payment Reminder Settings ────────────────────────────────────────────────
+
+def _reminder_panel_text(enabled: bool, first_min: str, second_min: str) -> str:
+    return (
+        "🔔 <b>Payment Reminder Settings</b>\n\n"
+        f"Status: {'✅ Enabled' if enabled else '🚫 Disabled'}\n"
+        f"⏱ First reminder: {first_min} minutes after Buy Now\n"
+        f"🕒 Final reminder: {second_min} minutes after Buy Now\n\n"
+        "Select an option:"
+    )
+
+
+@router.callback_query(lambda c: c.data == "admin_reminders")
+async def cb_reminders_panel(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    _state.pop(call.from_user.id, None)
+    enabled = (await get_setting("reminder_enabled", "1")) == "1"
+    first_min = await get_setting("reminder_first_delay_min", "15")
+    second_min = await get_setting("reminder_second_delay_min", "1440")
+    text = _reminder_panel_text(enabled, first_min, second_min)
+    try:
+        await call.message.edit_text(text, reply_markup=reminder_settings_keyboard(enabled))
+    except Exception:
+        await call.message.answer(text, reply_markup=reminder_settings_keyboard(enabled))
+
+
+@router.callback_query(lambda c: c.data == "admin_rm_noop")
+async def cb_rm_noop(call: CallbackQuery) -> None:
+    await call.answer()  # status badge tap — do nothing
+
+
+@router.callback_query(lambda c: c.data == "admin_rm_enable")
+async def cb_rm_enable(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await set_setting("reminder_enabled", "1")
+    await call.answer("✅ Payment reminders enabled.", show_alert=True)
+    first_min = await get_setting("reminder_first_delay_min", "15")
+    second_min = await get_setting("reminder_second_delay_min", "1440")
+    try:
+        await call.message.edit_text(
+            _reminder_panel_text(True, first_min, second_min),
+            reply_markup=reminder_settings_keyboard(True),
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(lambda c: c.data == "admin_rm_disable")
+async def cb_rm_disable(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await set_setting("reminder_enabled", "0")
+    await call.answer("🚫 Payment reminders disabled.", show_alert=True)
+    first_min = await get_setting("reminder_first_delay_min", "15")
+    second_min = await get_setting("reminder_second_delay_min", "1440")
+    try:
+        await call.message.edit_text(
+            _reminder_panel_text(False, first_min, second_min),
+            reply_markup=reminder_settings_keyboard(False),
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(lambda c: c.data == "admin_rm_first")
+async def cb_rm_first_start(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    _state[call.from_user.id] = {"step": "reminder:first_delay", "data": {}}
+    current = await get_setting("reminder_first_delay_min", "15")
+    await call.message.edit_text(
+        "⏱ <b>First Reminder Delay</b>\n\n"
+        f"Current: {current} minutes\n\n"
+        "Send the new delay, in whole minutes, after a user clicks Buy Now before "
+        "the first reminder is sent (e.g. <code>15</code>).\n\n"
+        "Type /cancel to abort.",
+        reply_markup=None,
+    )
+
+
+_MAX_REMINDER_DELAY_MIN = 525600  # 1 year — generous upper bound, prevents overflow/nonsense values
+
+
+@router.message(_in_state("reminder:first_delay"), F.text)
+async def handle_rm_first_delay(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if raw.startswith("/"):
+        return
+    if not raw.isdigit() or not (0 < int(raw) <= _MAX_REMINDER_DELAY_MIN):
+        await message.answer(
+            f"⚠️ Please send a whole number of minutes between 1 and {_MAX_REMINDER_DELAY_MIN} (e.g. 15)."
+        )
+        return
+    _state.pop(message.from_user.id, None)
+    await set_setting("reminder_first_delay_min", raw)
+    await message.answer(
+        f"✅ First reminder delay updated to {raw} minutes.",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+
+@router.callback_query(lambda c: c.data == "admin_rm_second")
+async def cb_rm_second_start(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    _state[call.from_user.id] = {"step": "reminder:second_delay", "data": {}}
+    current = await get_setting("reminder_second_delay_min", "1440")
+    await call.message.edit_text(
+        "🕒 <b>Final Reminder Delay</b>\n\n"
+        f"Current: {current} minutes\n\n"
+        "Send the new delay, in whole minutes, after a user clicks Buy Now before "
+        "the final reminder is sent (e.g. <code>1440</code> for 24 hours).\n\n"
+        "Type /cancel to abort.",
+        reply_markup=None,
+    )
+
+
+@router.message(_in_state("reminder:second_delay"), F.text)
+async def handle_rm_second_delay(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if raw.startswith("/"):
+        return
+    if not raw.isdigit() or not (0 < int(raw) <= _MAX_REMINDER_DELAY_MIN):
+        await message.answer(
+            f"⚠️ Please send a whole number of minutes between 1 and {_MAX_REMINDER_DELAY_MIN} (e.g. 1440)."
+        )
+        return
+    _state.pop(message.from_user.id, None)
+    await set_setting("reminder_second_delay_min", raw)
+    await message.answer(
+        f"✅ Final reminder delay updated to {raw} minutes.",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+
+@router.callback_query(lambda c: c.data == "admin_rm_message")
+async def cb_rm_message_start(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    _state[call.from_user.id] = {"step": "reminder:message", "data": {}}
+    current = await get_setting("reminder_message", "")
+    preview = html.escape(current) if current else "(not set — using default)"
+    await call.message.edit_text(
+        "✏️ <b>Reminder Message</b>\n\n"
+        "<b>Current message</b> (shown escaped/raw below):\n"
+        f"<pre>{preview}</pre>\n\n"
+        "Send the new reminder message. It is used for both the first and final "
+        "reminder. You can use these placeholders — they'll be filled in "
+        "automatically:\n"
+        "<code>{plan_name}</code>  <code>{plan_price}</code>  <code>{plan_validity}</code>\n\n"
+        "HTML formatting is supported. Type /cancel to abort.",
+        reply_markup=None,
+    )
+
+
+@router.message(_in_state("reminder:message"), F.text)
+async def handle_rm_message(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    text = (message.text or "").strip()
+    if text.startswith("/"):
+        return
+    _state.pop(message.from_user.id, None)
+    await set_setting("reminder_message", text)
+    await message.answer(
+        "✅ Reminder message updated.",
         reply_markup=admin_panel_keyboard(),
     )
 

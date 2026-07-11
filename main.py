@@ -16,6 +16,7 @@ from handlers import start
 from handlers import payment
 from handlers import admin
 from handlers import settings as settings_handler
+import reminder_scheduler
 
 logging.basicConfig(level=logging.INFO)
 
@@ -67,6 +68,8 @@ async def main() -> None:
     dp.include_router(start.router)
 
     await bot.set_my_commands(BOT_COMMANDS)
+
+    asyncio.create_task(reminder_scheduler.run(bot))
 
     await dp.start_polling(bot)
 
