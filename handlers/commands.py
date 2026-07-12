@@ -1,12 +1,12 @@
 import logging
 from datetime import datetime, timezone, timedelta
 
-from aiogram import Router
+from aiogram import Bot, Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
 from config import SUPPORT_GROUP_URL
-from database import get_all_plans, get_user_active_subscription, get_setting
+from database import get_all_plans, get_user_active_subscription, get_setting, get_user_referral_info
 from keyboards.menu import plan_detail_keyboard, plans_list_keyboard
 
 _IST = timezone(timedelta(hours=5, minutes=30))
@@ -81,9 +81,27 @@ async def cmd_help(message: Message) -> None:
 # ── /refer ───────────────────────────────────────────────────────────────────
 
 @router.message(Command("refer", ignore_case=True))
-async def cmd_refer(message: Message) -> None:
-    """Refer & Earn — handler stub. Full UI will be implemented later."""
-    pass
+async def cmd_refer(message: Message, bot: Bot) -> None:
+    """Refer & Earn — show the user their referral link and stats."""
+    logger.info("/refer from user %s", message.from_user.id)
+
+    user_id = message.from_user.id
+    bot_info = await bot.get_me()
+    referral_link = f"https://t.me/{bot_info.username}?start={user_id}"
+
+    info = await get_user_referral_info(user_id)
+    total_referrals  = info["total_referrals"]
+    referral_discount = info["referral_discount"]
+
+    await message.answer(
+        "🎉 <b>Refer Friends &amp; Earn Discounts!</b>\n\n"
+        "Invite your friends using your personal referral link.\n\n"
+        "Every valid referral gives you a <b>5% discount</b> on your next purchase.\n\n"
+        "Share this link:\n\n"
+        f"<code>{referral_link}</code>\n\n"
+        f"👥 <b>Total Referrals:</b> {total_referrals}\n"
+        f"🎁 <b>Current Discount:</b> {referral_discount}%"
+    )
 
 
 # ── /contact ──────────────────────────────────────────────────────────────────

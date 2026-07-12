@@ -237,6 +237,20 @@ async def get_all_user_ids() -> list[int]:
     return [doc["_id"] async for doc in cursor]
 
 
+async def get_user_referral_info(user_id: int) -> dict:
+    """Return referral stats for a user: total_referrals and referral_discount."""
+    doc = await _users.find_one(
+        {"_id": user_id},
+        {"total_referrals": 1, "referral_discount": 1},
+    )
+    if not doc:
+        return {"total_referrals": 0, "referral_discount": 0}
+    return {
+        "total_referrals":  doc.get("total_referrals", 0),
+        "referral_discount": doc.get("referral_discount", 0),
+    }
+
+
 # ── Plans ─────────────────────────────────────────────────────────────────────
 
 def _plan_doc_to_dict(doc: dict) -> dict:
