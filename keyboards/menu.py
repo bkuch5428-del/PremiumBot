@@ -247,6 +247,20 @@ def approve_reject_keyboard(order_id: str) -> InlineKeyboardMarkup:
     )
 
 
+# ── Referral ──────────────────────────────────────────────────────────────────
+
+def refer_share_keyboard(referral_link: str) -> InlineKeyboardMarkup:
+    """Share button that opens Telegram's native share dialog with a pre-filled message."""
+    from urllib.parse import quote
+    share_text = quote("🎉 Join this premium bot and unlock exclusive content!\n\n" + referral_link)
+    share_url  = f"https://t.me/share/url?url={quote(referral_link)}&text={share_text}"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔗 Share Link", url=share_url)],
+        ]
+    )
+
+
 # ── Legacy aliases (kept so older imports don't break) ────────────────────────
 
 def product_keyboard() -> InlineKeyboardMarkup:

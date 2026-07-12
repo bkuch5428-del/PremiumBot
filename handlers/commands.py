@@ -7,7 +7,7 @@ from aiogram.types import Message
 
 from config import SUPPORT_GROUP_URL
 from database import get_all_plans, get_user_active_subscription, get_setting, get_user_referral_info
-from keyboards.menu import plan_detail_keyboard, plans_list_keyboard
+from keyboards.menu import plan_detail_keyboard, plans_list_keyboard, refer_share_keyboard
 
 _IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -100,7 +100,8 @@ async def cmd_refer(message: Message, bot: Bot) -> None:
         "Share this link:\n\n"
         f"<code>{referral_link}</code>\n\n"
         f"👥 <b>Total Referrals:</b> {total_referrals}\n"
-        f"🎁 <b>Current Discount:</b> {referral_discount}%"
+        f"🎁 <b>Current Discount:</b> {referral_discount}%",
+        reply_markup=refer_share_keyboard(referral_link),
     )
 
 
