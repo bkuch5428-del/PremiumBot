@@ -22,6 +22,7 @@ from database import (
     create_order,
     update_order_status,
     approve_order,
+    get_order_final_price,
     get_plan,
     get_all_plans,
     get_setting,
@@ -81,36 +82,8 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
     user = call.from_user
     await log_payment_started(bot, user.id, user.first_name, plan_title=plan["name"])
 
-    # Retry up to 5 times on PK collision
-    order_id: str | None = None
-    for _ in range(5):
-        candidate = _make_order_id()
-        try:
-            await create_order(
-                user_id=user.id,
-                plan_name=plan["name"],
-                plan_price=plan["price"],
-                plan_validity=plan["validity"],
-                order_id=candidate,
-                plan_id=plan_id,
-                access_link=plan["access_link"],
-            )
-            order_id = candidate
-            break
-        except Exception as exc:
-            if "UNIQUE" in str(exc).upper():
-                logger.warning("Order ID collision on %s — retrying", candidate)
-                continue
-            logger.exception("Failed to create order for user %s", user.id)
-            await call.message.answer("⚠️ Something went wrong. Please try again.")
-            return
-
-    if order_id is None:
-        await call.message.answer("⚠️ Could not generate order. Please try again.")
-        return
-
-    # Referral discount: calculate before rendering so the default template
-    # can embed {price_section} and {final_price_str} directly.
+    # Referral discount: calculate first so final_price is available when the
+    # order document is created and stored in MongoDB.
     referral_info = await get_user_referral_info(user.id)
     discount_pct = referral_info.get("referral_discount", 0) or 0
     original_price_str = plan["price"]
@@ -130,6 +103,35 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         f"🎁 <b>Referral Discount:</b> {discount_pct}%\n"
         f"💳 <b>Final Price:</b> ₹{final_price_str}"
     )
+
+    # Retry up to 5 times on PK collision
+    order_id: str | None = None
+    for _ in range(5):
+        candidate = _make_order_id()
+        try:
+            await create_order(
+                user_id=user.id,
+                plan_name=plan["name"],
+                plan_price=plan["price"],
+                plan_validity=plan["validity"],
+                order_id=candidate,
+                plan_id=plan_id,
+                access_link=plan["access_link"],
+                final_price=final_price_str,
+            )
+            order_id = candidate
+            break
+        except Exception as exc:
+            if "UNIQUE" in str(exc).upper():
+                logger.warning("Order ID collision on %s — retrying", candidate)
+                continue
+            logger.exception("Failed to create order for user %s", user.id)
+            await call.message.answer("⚠️ Something went wrong. Please try again.")
+            return
+
+    if order_id is None:
+        await call.message.answer("⚠️ Could not generate order. Please try again.")
+        return
 
     # Payment message: use DB setting (already migrated to new template on startup),
     # fall back to the built-in default if the setting is empty.
@@ -171,11 +173,12 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
 
     # Store plan context for proof handler
     _awaiting_proof[user.id] = {
-        "order_id":     order_id,
-        "plan_name":    plan["name"],
-        "plan_price":   plan["price"],
+        "order_id":      order_id,
+        "plan_name":     plan["name"],
+        "plan_price":    plan["price"],
+        "final_price":   final_price_str,
         "plan_validity": plan["validity"],
-        "access_link":  plan["access_link"],
+        "access_link":   plan["access_link"],
     }
 
     # Schedule abandoned-payment reminders — replaces any previous schedule
@@ -283,6 +286,11 @@ async def handle_payment_proof(message: Message, bot: Bot) -> None:
     order_id = info["order_id"]
     plan_name = info.get("plan_name", "—")
     plan_price = info.get("plan_price", "—")
+    # Use the discounted final price shown to the user; fall back to DB if the
+    # session was restored from a cold start (only order_id available in info).
+    final_price = info.get("final_price")
+    if not final_price:
+        final_price = await get_order_final_price(order_id) or plan_price
 
     await update_order_status(order_id, "pending")
 
@@ -293,7 +301,7 @@ async def handle_payment_proof(message: Message, bot: Bot) -> None:
         f"📛 Username: {username}\n"
         f"🆔 User ID: <code>{user.id}</code>\n"
         f"📦 Plan: {html.escape(plan_name)}\n"
-        f"💰 Amount: ₹{html.escape(plan_price)}\n"
+        f"💰 Amount: ₹{html.escape(str(final_price))}\n"
         f"🕒 Time: {_now_ist()}"
     )
 

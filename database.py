@@ -547,6 +547,7 @@ async def create_order(
     order_id: str,
     plan_id: int | None = None,
     access_link: str = "",
+    final_price: str = "",
 ) -> None:
     """Insert a new order row with status 'created'."""
     try:
@@ -555,6 +556,7 @@ async def create_order(
             "user_id":            user_id,
             "plan_name":          plan_name,
             "plan_price":         plan_price,
+            "final_price":        final_price or plan_price,
             "plan_validity":      plan_validity,
             "payment_status":     "created",
             "created_at":         datetime.now(timezone.utc),
@@ -636,18 +638,32 @@ async def get_pending_orders() -> list[dict]:
     """Return all orders with payment_status='pending'."""
     cursor = _orders.find(
         {"payment_status": "pending"},
-        {"_id": 1, "user_id": 1, "plan_name": 1, "plan_price": 1, "created_at": 1},
+        {"_id": 1, "user_id": 1, "plan_name": 1, "plan_price": 1, "final_price": 1, "created_at": 1},
     ).sort("created_at", -1)
     result = []
     async for doc in cursor:
+        plan_price = doc.get("plan_price", "—")
         result.append({
-            "order_id":   doc["_id"],
-            "user_id":    doc.get("user_id"),
-            "plan_name":  doc.get("plan_name"),
-            "plan_price": doc.get("plan_price"),
-            "created_at": doc.get("created_at"),
+            "order_id":    doc["_id"],
+            "user_id":     doc.get("user_id"),
+            "plan_name":   doc.get("plan_name"),
+            "plan_price":  plan_price,
+            "final_price": doc.get("final_price") or plan_price,
+            "created_at":  doc.get("created_at"),
         })
     return result
+
+
+async def get_order_final_price(order_id: str) -> str | None:
+    """Return the stored final_price for an order, falling back to plan_price.
+    Returns None if the order does not exist."""
+    doc = await _orders.find_one(
+        {"_id": order_id},
+        {"plan_price": 1, "final_price": 1},
+    )
+    if doc is None:
+        return None
+    return doc.get("final_price") or doc.get("plan_price", "—")
 
 
 async def get_user_active_subscription(user_id: int) -> dict | None:
