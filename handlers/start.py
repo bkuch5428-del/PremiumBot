@@ -5,7 +5,7 @@ from aiogram import Router, Bot
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 
-from database import save_user, save_referral, get_all_plans, get_plan, get_setting, get_start_demo
+from database import save_user, save_referral, get_user_referral_info, get_all_plans, get_plan, get_setting, get_start_demo
 from keyboards.menu import plans_list_keyboard, plan_detail_keyboard, main_menu_keyboard
 from handlers.log_channel import log_new_user, log_plan_selected
 
@@ -145,9 +145,27 @@ async def cmd_start(message: Message, bot: Bot) -> None:
     # Record referral only for brand-new users referred by someone else
     if is_new and referrer_id is not None:
         try:
-            await save_referral(user.id, referrer_id)
+            referral_counted = await save_referral(user.id, referrer_id)
         except Exception:
             logger.exception("Failed to save referral for user %s from %s", user.id, referrer_id)
+            referral_counted = False
+
+        if referral_counted:
+            try:
+                info = await get_user_referral_info(referrer_id)
+                await bot.send_message(
+                    chat_id=referrer_id,
+                    text=(
+                        "🎉 <b>Congratulations!</b>\n\n"
+                        "You earned <b>5% Referral Discount</b>! 🥳\n\n"
+                        f"👥 <b>Total Referrals:</b> {info['total_referrals']}\n"
+                        f"🎁 <b>Current Discount:</b> {info['referral_discount']}%\n\n"
+                        "Keep inviting your friends to unlock even bigger savings! 🚀"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                logger.exception("Failed to send referral notification to user %s", referrer_id)
 
     if is_new:
         await log_new_user(bot, user.id, user.first_name, user.username)
