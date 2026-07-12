@@ -187,15 +187,20 @@ def admin_confirm_save_keyboard() -> InlineKeyboardMarkup:
 
 # ── User-facing plan list (dynamic) ───────────────────────────────────────────
 
+_SUPPORT_URL = "https://t.me/+biQdXipbbJ4xODA1"
+
 def plans_list_keyboard(plans: list[dict]) -> InlineKeyboardMarkup:
-    """Show all plans as selectable buttons."""
-    rows = [
-        [InlineKeyboardButton(
+    """Show all plans as selectable buttons, each followed by Support & Get Discount."""
+    rows = []
+    for p in plans:
+        rows.append([InlineKeyboardButton(
             text=f"📦 {p['name']} — ₹{p['price']} / {p['validity']}",
             callback_data=f"plan:{p['id']}",
-        )]
-        for p in plans
-    ]
+        )])
+        rows.append([
+            InlineKeyboardButton(text="📞 Support",      url=_SUPPORT_URL),
+            InlineKeyboardButton(text="🏷️ Get Discount", callback_data="open_refer"),
+        ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
