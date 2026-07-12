@@ -43,6 +43,8 @@ from database import (
     move_plan_down,
     move_plan_to_top,
     move_plan_to_bottom,
+    get_referral_stats,
+    reset_referral_data,
 )
 from keyboards.menu import (
     admin_panel_keyboard,
@@ -55,6 +57,8 @@ from keyboards.menu import (
     start_demo_settings_keyboard,
     start_demo_done_keyboard,
     reminder_settings_keyboard,
+    referral_settings_keyboard,
+    referral_reset_confirm_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -1142,6 +1146,121 @@ async def handle_rm_msg24(message: Message) -> None:
         "✅ 24 hour reminder message updated.",
         reply_markup=admin_panel_keyboard(),
     )
+
+
+# ── Referral Settings ────────────────────────────────────────────────────────
+
+async def _referral_panel(target) -> None:
+    """Show (or re-show) the Referral Settings sub-panel."""
+    enabled = (await get_setting("referral_enabled", "1")) == "1"
+    status  = "✅ Enabled" if enabled else "❌ Disabled"
+    text = (
+        "👥 <b>Referral Settings</b>\n\n"
+        f"Status: {status}\n\n"
+        "Select an option:"
+    )
+    kb = referral_settings_keyboard(enabled)
+    if isinstance(target, CallbackQuery):
+        try:
+            await target.message.edit_text(text, reply_markup=kb)
+        except Exception:
+            await target.message.answer(text, reply_markup=kb)
+    else:
+        await target.answer(text, reply_markup=kb)
+
+
+@router.callback_query(lambda c: c.data == "admin_referral")
+async def cb_referral_panel(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    _state.pop(call.from_user.id, None)
+    await _referral_panel(call)
+
+
+@router.callback_query(lambda c: c.data == "admin_ref_noop")
+async def cb_ref_noop(call: CallbackQuery) -> None:
+    await call.answer()  # status badge tap — do nothing
+
+
+@router.callback_query(lambda c: c.data == "admin_ref_enable")
+async def cb_ref_enable(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await set_setting("referral_enabled", "1")
+    await call.answer("✅ Referral system enabled.", show_alert=True)
+    await _referral_panel(call)
+
+
+@router.callback_query(lambda c: c.data == "admin_ref_disable")
+async def cb_ref_disable(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await set_setting("referral_enabled", "0")
+    await call.answer("❌ Referral system disabled.", show_alert=True)
+    await _referral_panel(call)
+
+
+@router.callback_query(lambda c: c.data == "admin_ref_stats")
+async def cb_ref_stats(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    s = await get_referral_stats()
+    status = "✅ ON" if s["enabled"] else "❌ OFF"
+    try:
+        await call.message.edit_text(
+            "📊 <b>Referral Statistics</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🔘 <b>Referral System:</b>          {status}\n"
+            f"👥 <b>Total Referrers:</b>           {s['total_referrers']}\n"
+            f"✅ <b>Total Successful Referrals:</b> {s['total_referrals']}\n"
+            "━━━━━━━━━━━━━━━━━━━━━",
+            reply_markup=referral_settings_keyboard(s["enabled"]),
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(lambda c: c.data == "admin_ref_reset")
+async def cb_ref_reset(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    try:
+        await call.message.edit_text(
+            "🔄 <b>Reset Referral Data</b>\n\n"
+            "⚠️ This will reset <b>all</b> referral counts, discounts, and referrer links "
+            "for every user.\n\n"
+            "This action cannot be undone. Are you sure?",
+            reply_markup=referral_reset_confirm_keyboard(),
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(lambda c: c.data == "admin_ref_reset_confirm")
+async def cb_ref_reset_confirm(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer("🔄 Resetting…")
+    await reset_referral_data()
+    try:
+        await call.message.edit_text(
+            "✅ <b>Referral data has been reset.</b>\n\n"
+            "All referral counts, discounts, and referrer links have been cleared.",
+            reply_markup=referral_settings_keyboard(
+                (await get_setting("referral_enabled", "1")) == "1"
+            ),
+        )
+    except Exception:
+        pass
 
 
 # ── Edit Plan QR ─────────────────────────────────────────────────────────────

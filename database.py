@@ -145,6 +145,7 @@ async def init_db() -> None:
         ("reminder_second_delay_min", "1440"),  # 24 hours
         ("reminder_first_message",   _DEFAULT_REMINDER_FIRST_MESSAGE),   # 15-minute reminder
         ("reminder_second_message",  _DEFAULT_REMINDER_SECOND_MESSAGE),  # 24-hour reminder
+        ("referral_enabled",         "1"),  # referral system on by default
     ]
     for key, value in _defaults:
         await _settings.update_one(
@@ -238,6 +239,10 @@ async def save_referral(user_id: int, referrer_id: int) -> bool:
     if user_id == referrer_id:
         return False
 
+    # Honour the admin toggle — do not count new referrals when disabled.
+    if (await get_setting("referral_enabled", "1")) != "1":
+        return False
+
     # Atomically set referred_by only if it is still None (first referral wins).
     result = await _users.update_one(
         {"_id": user_id, "referred_by": None},
@@ -253,6 +258,35 @@ async def save_referral(user_id: int, referrer_id: int) -> bool:
     )
     logger.info("Referral recorded: user %s referred by %s", user_id, referrer_id)
     return True
+
+
+async def get_referral_stats() -> dict:
+    """Return referral statistics for the admin referral settings panel."""
+    enabled = (await get_setting("referral_enabled", "1")) == "1"
+    total_referrers = await _users.count_documents({"total_referrals": {"$gt": 0}})
+    agg_cursor = _users.aggregate([
+        {"$group": {"_id": None, "total": {"$sum": "$total_referrals"}}},
+    ])
+    agg_docs = await agg_cursor.to_list(length=1)
+    total_referrals = int(agg_docs[0]["total"]) if agg_docs else 0
+    return {
+        "enabled":          enabled,
+        "total_referrers":  total_referrers,
+        "total_referrals":  total_referrals,
+    }
+
+
+async def reset_referral_data() -> None:
+    """Reset all referral counters and discounts for every user. Keeps referral_code."""
+    await _users.update_many(
+        {},
+        {"$set": {
+            "referred_by":       None,
+            "total_referrals":   0,
+            "referral_discount": 0,
+        }},
+    )
+    logger.info("All referral data reset by admin")
 
 
 async def get_all_user_ids() -> list[int]:

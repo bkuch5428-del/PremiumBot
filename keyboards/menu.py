@@ -25,6 +25,9 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🔔 Payment Reminder Settings", callback_data="admin_reminders"),
             ],
             [
+                InlineKeyboardButton(text="👥 Referral Settings", callback_data="admin_referral"),
+            ],
+            [
                 InlineKeyboardButton(text="📊 Statistics", callback_data="admin_stats"),
                 InlineKeyboardButton(text="📢 Broadcast",  callback_data="admin_broadcast"),
             ],
@@ -253,7 +256,36 @@ def approve_reject_keyboard(order_id: str) -> InlineKeyboardMarkup:
     )
 
 
-# ── Referral ──────────────────────────────────────────────────────────────────
+# ── Referral admin keyboards ──────────────────────────────────────────────────
+
+def referral_settings_keyboard(enabled: bool) -> InlineKeyboardMarkup:
+    """Sub-panel for Referral Settings."""
+    status = "✅ Enabled" if enabled else "❌ Disabled"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"Status: {status}", callback_data="admin_ref_noop")],
+            [InlineKeyboardButton(text="✅ Enable Referral System",  callback_data="admin_ref_enable")],
+            [InlineKeyboardButton(text="❌ Disable Referral System", callback_data="admin_ref_disable")],
+            [InlineKeyboardButton(text="📊 Referral Statistics",     callback_data="admin_ref_stats")],
+            [InlineKeyboardButton(text="🔄 Reset Referral Data",     callback_data="admin_ref_reset")],
+            [InlineKeyboardButton(text="⬅️ Back",                    callback_data="admin_cancel")],
+        ]
+    )
+
+
+def referral_reset_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Confirmation keyboard before wiping all referral data."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Yes, Reset Everything", callback_data="admin_ref_reset_confirm"),
+                InlineKeyboardButton(text="❌ Cancel",                callback_data="admin_referral"),
+            ]
+        ]
+    )
+
+
+# ── Referral user-facing ──────────────────────────────────────────────────────
 
 def refer_share_keyboard(referral_link: str) -> InlineKeyboardMarkup:
     """Share button that opens Telegram's native share dialog with a pre-filled message."""

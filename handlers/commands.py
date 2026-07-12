@@ -82,11 +82,23 @@ async def cmd_help(message: Message) -> None:
 
 from aiogram.types import CallbackQuery as _CQ  # local import to avoid circular
 
-@router.callback_query(lambda c: c.data == "open_refer")
-async def cb_open_refer(call: _CQ, bot: Bot) -> None:
-    """🏷️ Get Discount inline button — shows the same page as /refer."""
-    await call.answer()
-    user_id = call.from_user.id
+_REFERRAL_UNAVAILABLE = "⚠️ Referral program is currently unavailable."
+
+
+async def _referral_enabled() -> bool:
+    return (await get_setting("referral_enabled", "1")) == "1"
+
+
+async def _send_refer_page(target, bot: Bot) -> None:
+    """Shared logic for /refer and the 🏷️ Get Discount button."""
+    if not await _referral_enabled():
+        if isinstance(target, _CQ):
+            await target.message.answer(_REFERRAL_UNAVAILABLE)
+        else:
+            await target.answer(_REFERRAL_UNAVAILABLE)
+        return
+
+    user_id = target.from_user.id
     bot_info = await bot.get_me()
     referral_link = f"https://t.me/{bot_info.username}?start={user_id}"
 
@@ -94,42 +106,35 @@ async def cb_open_refer(call: _CQ, bot: Bot) -> None:
     total_referrals   = info["total_referrals"]
     referral_discount = info["referral_discount"]
 
-    from keyboards.menu import refer_share_keyboard
-    await call.message.answer(
+    text = (
         "🎉 <b>Refer Friends &amp; Earn Discounts!</b>\n\n"
         "Invite your friends using your personal referral link.\n\n"
         "Every valid referral gives you a <b>5% discount</b> on your next purchase.\n\n"
         "Share this link:\n\n"
         f"<code>{referral_link}</code>\n\n"
         f"👥 <b>Total Referrals:</b> {total_referrals}\n"
-        f"🎁 <b>Current Discount:</b> {referral_discount}%",
-        reply_markup=refer_share_keyboard(referral_link),
+        f"🎁 <b>Current Discount:</b> {referral_discount}%"
     )
+    kb = refer_share_keyboard(referral_link)
+
+    if isinstance(target, _CQ):
+        await target.message.answer(text, reply_markup=kb)
+    else:
+        await target.answer(text, reply_markup=kb)
+
+
+@router.callback_query(lambda c: c.data == "open_refer")
+async def cb_open_refer(call: _CQ, bot: Bot) -> None:
+    """🏷️ Get Discount inline button."""
+    await call.answer()
+    await _send_refer_page(call, bot)
 
 
 @router.message(Command("refer", ignore_case=True))
 async def cmd_refer(message: Message, bot: Bot) -> None:
     """Refer & Earn — show the user their referral link and stats."""
     logger.info("/refer from user %s", message.from_user.id)
-
-    user_id = message.from_user.id
-    bot_info = await bot.get_me()
-    referral_link = f"https://t.me/{bot_info.username}?start={user_id}"
-
-    info = await get_user_referral_info(user_id)
-    total_referrals  = info["total_referrals"]
-    referral_discount = info["referral_discount"]
-
-    await message.answer(
-        "🎉 <b>Refer Friends &amp; Earn Discounts!</b>\n\n"
-        "Invite your friends using your personal referral link.\n\n"
-        "Every valid referral gives you a <b>5% discount</b> on your next purchase.\n\n"
-        "Share this link:\n\n"
-        f"<code>{referral_link}</code>\n\n"
-        f"👥 <b>Total Referrals:</b> {total_referrals}\n"
-        f"🎁 <b>Current Discount:</b> {referral_discount}%",
-        reply_markup=refer_share_keyboard(referral_link),
-    )
+    await _send_refer_page(message, bot)
 
 
 # ── /contact ──────────────────────────────────────────────────────────────────
