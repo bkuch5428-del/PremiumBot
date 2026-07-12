@@ -117,8 +117,8 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
 
     if discount_pct > 0:
         try:
-            final_price = round(float(original_price_str) * (1 - discount_pct / 100), 2)
-            final_price_str = f"{final_price:g}"
+            final_price = round(float(original_price_str) * (1 - discount_pct / 100))
+            final_price_str = str(final_price)
         except (ValueError, TypeError):
             final_price_str = original_price_str
     else:
