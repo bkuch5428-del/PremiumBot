@@ -260,6 +260,44 @@ async def save_referral(user_id: int, referrer_id: int) -> bool:
     return True
 
 
+_MAX_REFERRAL_DISCOUNT = 100  # cap at 100 %
+
+
+async def admin_add_referrals(user_id: int, count: int) -> dict | None:
+    """
+    Admin helper: manually credit `count` referrals to a user.
+    Increments total_referrals by count and referral_discount by count*5,
+    capped at _MAX_REFERRAL_DISCOUNT.
+    Does NOT trigger notifications or affect global referral statistics.
+    Returns updated {total_referrals, referral_discount}, or None if user not found.
+    """
+    doc = await _users.find_one(
+        {"_id": user_id},
+        {"total_referrals": 1, "referral_discount": 1},
+    )
+    if doc is None:
+        return None
+
+    current_referrals = int(doc.get("total_referrals",   0))
+    current_discount  = int(doc.get("referral_discount", 0))
+
+    new_referrals = current_referrals + count
+    new_discount  = min(current_discount + count * 5, _MAX_REFERRAL_DISCOUNT)
+
+    await _users.update_one(
+        {"_id": user_id},
+        {"$set": {
+            "total_referrals":   new_referrals,
+            "referral_discount": new_discount,
+        }},
+    )
+    logger.info(
+        "Admin manually added %d referrals to user %s → referrals=%d discount=%d%%",
+        count, user_id, new_referrals, new_discount,
+    )
+    return {"total_referrals": new_referrals, "referral_discount": new_discount}
+
+
 async def get_referral_stats() -> dict:
     """Return referral statistics for the admin referral settings panel."""
     enabled = (await get_setting("referral_enabled", "1")) == "1"

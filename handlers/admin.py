@@ -45,6 +45,7 @@ from database import (
     move_plan_to_bottom,
     get_referral_stats,
     reset_referral_data,
+    admin_add_referrals,
 )
 from keyboards.menu import (
     admin_panel_keyboard,
@@ -1261,6 +1262,78 @@ async def cb_ref_reset_confirm(call: CallbackQuery) -> None:
         )
     except Exception:
         pass
+
+
+# ── Referral: Add Referral (admin manual credit) ──────────────────────────────
+
+@router.callback_query(lambda c: c.data == "admin_ref_add")
+async def cb_ref_add(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    _state[call.from_user.id] = {"step": "ref_add:user_id", "data": {}}
+    try:
+        await call.message.edit_text(
+            "➕ <b>Add Referral</b>\n\n"
+            "Send the <b>User ID</b> you want to credit referrals to:",
+            reply_markup=None,
+        )
+    except Exception:
+        await call.message.answer(
+            "➕ <b>Add Referral</b>\n\n"
+            "Send the <b>User ID</b> you want to credit referrals to:",
+        )
+
+
+@router.message(_in_state("ref_add:user_id"), F.text)
+async def handle_ref_add_user_id(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if not raw.lstrip("-").isdigit():
+        await message.answer("⚠️ Invalid User ID. Please send a numeric Telegram User ID:")
+        return
+    _state[message.from_user.id]["data"]["target_user_id"] = int(raw)
+    _state[message.from_user.id]["step"] = "ref_add:count"
+    await message.answer(
+        "➕ <b>Add Referral</b>\n\n"
+        f"User ID: <code>{raw}</code>\n\n"
+        "How many referrals do you want to add?",
+    )
+
+
+@router.message(_in_state("ref_add:count"), F.text)
+async def handle_ref_add_count(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if not raw.isdigit() or int(raw) < 1:
+        await message.answer("⚠️ Please send a positive number:")
+        return
+    count = int(raw)
+    st = _state.pop(message.from_user.id, None)
+    if not st:
+        return
+    target_user_id = st["data"]["target_user_id"]
+    result = await admin_add_referrals(target_user_id, count)
+    if result is None:
+        await message.answer(
+            "❌ User not found.",
+            reply_markup=referral_settings_keyboard(
+                (await get_setting("referral_enabled", "1")) == "1"
+            ),
+        )
+        return
+    await message.answer(
+        "✅ <b>Referral Added Successfully</b>\n\n"
+        f"👤 <b>User ID:</b> <code>{target_user_id}</code>\n"
+        f"👥 <b>Total Referrals:</b> {result['total_referrals']}\n"
+        f"🎁 <b>Current Discount:</b> {result['referral_discount']}%",
+        reply_markup=referral_settings_keyboard(
+            (await get_setting("referral_enabled", "1")) == "1"
+        ),
+    )
 
 
 # ── Edit Plan QR ─────────────────────────────────────────────────────────────

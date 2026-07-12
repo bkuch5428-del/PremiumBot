@@ -266,6 +266,7 @@ def referral_settings_keyboard(enabled: bool) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=f"Status: {status}", callback_data="admin_ref_noop")],
             [InlineKeyboardButton(text="✅ Enable Referral System",  callback_data="admin_ref_enable")],
             [InlineKeyboardButton(text="❌ Disable Referral System", callback_data="admin_ref_disable")],
+            [InlineKeyboardButton(text="➕ Add Referral",            callback_data="admin_ref_add")],
             [InlineKeyboardButton(text="📊 Referral Statistics",     callback_data="admin_ref_stats")],
             [InlineKeyboardButton(text="🔄 Reset Referral Data",     callback_data="admin_ref_reset")],
             [InlineKeyboardButton(text="⬅️ Back",                    callback_data="admin_cancel")],
