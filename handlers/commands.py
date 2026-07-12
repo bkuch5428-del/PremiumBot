@@ -78,6 +78,14 @@ async def cmd_help(message: Message) -> None:
     )
 
 
+# ── /refer ───────────────────────────────────────────────────────────────────
+
+@router.message(Command("refer", ignore_case=True))
+async def cmd_refer(message: Message) -> None:
+    """Refer & Earn — handler stub. Full UI will be implemented later."""
+    pass
+
+
 # ── /contact ──────────────────────────────────────────────────────────────────
 
 @router.message(Command("contact", ignore_case=True))

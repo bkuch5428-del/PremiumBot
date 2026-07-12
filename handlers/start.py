@@ -5,7 +5,7 @@ from aiogram import Router, Bot
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 
-from database import save_user, get_all_plans, get_plan, get_setting, get_start_demo
+from database import save_user, save_referral, get_all_plans, get_plan, get_setting, get_start_demo
 from keyboards.menu import plans_list_keyboard, plan_detail_keyboard, main_menu_keyboard
 from handlers.log_channel import log_new_user, log_plan_selected
 
@@ -127,11 +127,27 @@ async def cmd_start(message: Message, bot: Bot) -> None:
     logger.info("/start from user %s", message.from_user.id)
     user = message.from_user
 
+    # Parse deep-link referral argument: /start <referrer_user_id>
+    referrer_id: int | None = None
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) == 2:
+        try:
+            referrer_id = int(parts[1].strip())
+        except ValueError:
+            referrer_id = None
+
     try:
         is_new = await save_user(user.id, user.username, user.first_name)
     except Exception:
         logger.exception("Failed to save user %s", user.id)
         is_new = False
+
+    # Record referral only for brand-new users referred by someone else
+    if is_new and referrer_id is not None:
+        try:
+            await save_referral(user.id, referrer_id)
+        except Exception:
+            logger.exception("Failed to save referral for user %s from %s", user.id, referrer_id)
 
     if is_new:
         await log_new_user(bot, user.id, user.first_name, user.username)

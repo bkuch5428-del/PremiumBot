@@ -187,11 +187,48 @@ async def save_user(user_id: int, username: str | None, first_name: str) -> bool
         {"_id": user_id},
         {
             "$set": {"username": username, "first_name": first_name},
-            "$setOnInsert": {"joined_at": datetime.now(timezone.utc)},
+            "$setOnInsert": {
+                "joined_at":        datetime.now(timezone.utc),
+                "referral_code":    user_id,   # referral_code == user_id
+                "referred_by":      None,
+                "total_referrals":  0,
+                "referral_discount": 0,
+            },
         },
         upsert=True,
     )
     return is_new
+
+
+async def save_referral(user_id: int, referrer_id: int) -> bool:
+    """
+    Record that user_id was referred by referrer_id.
+
+    Guards:
+    - user must be new (referred_by is None — set only on first call)
+    - not self-referral (user_id != referrer_id)
+    - referral not already counted (atomic $setOnInsert equivalent via filter)
+
+    Returns True if the referral was successfully recorded.
+    """
+    if user_id == referrer_id:
+        return False
+
+    # Atomically set referred_by only if it is still None (first referral wins).
+    result = await _users.update_one(
+        {"_id": user_id, "referred_by": None},
+        {"$set": {"referred_by": referrer_id}},
+    )
+    if result.modified_count == 0:
+        return False  # already had a referrer, or user not found
+
+    # Increment the referrer's total_referrals counter.
+    await _users.update_one(
+        {"_id": referrer_id},
+        {"$inc": {"total_referrals": 1}},
+    )
+    logger.info("Referral recorded: user %s referred by %s", user_id, referrer_id)
+    return True
 
 
 async def get_all_user_ids() -> list[int]:

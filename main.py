@@ -41,6 +41,7 @@ BOT_COMMANDS = [
     BotCommand(command="start",   description="Start the bot"),
     BotCommand(command="plans",   description="View available plans"),
     BotCommand(command="status",  description="Check your subscription status"),
+    BotCommand(command="refer",   description="👥 Refer & Earn"),
     BotCommand(command="help",    description="Help & usage guide"),
     BotCommand(command="contact", description="Contact support"),
     BotCommand(command="admin",   description="Admin panel (admins only)"),
