@@ -109,32 +109,8 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         await call.message.answer("⚠️ Could not generate order. Please try again.")
         return
 
-    # Payment message: use DB setting, fall back to built-in default template
-    _default_tpl = (
-        "💳 <b>Payment Details</b>\n\n"
-        "📦 <b>Plan:</b> {plan_name}\n"
-        "💰 <b>Amount:</b> ₹{plan_price}\n"
-        "⌛ <b>Validity:</b> {plan_validity}\n\n"
-        "📲 Scan the QR code above using any UPI app.\n\n"
-        "✓ Pay ₹{plan_price} to the UPI ID shown.\n"
-        "✓ After payment, click <b>✅ I Have Paid</b>\n\n"
-        "🆔 <b>Order:</b> #{order_id}"
-    )
-    payment_tpl = (await get_setting("payment_message")) or _default_tpl
-    _fmt_kwargs = dict(
-        plan_name=plan["name"],
-        plan_price=plan["price"],
-        plan_validity=plan["validity"],
-        order_id=order_id,
-    )
-    try:
-        payment_msg = payment_tpl.format(**_fmt_kwargs)
-    except (KeyError, ValueError, IndexError):
-        # Admin entered a malformed template — fall back to built-in default
-        logger.warning("payment_message template is malformed — using default")
-        payment_msg = _default_tpl.format(**_fmt_kwargs)
-
-    # Referral discount: always replace the price section with a full price block
+    # Referral discount: calculate before rendering so the default template
+    # can embed {price_section} and {final_price_str} directly.
     referral_info = await get_user_referral_info(user.id)
     discount_pct = referral_info.get("referral_discount", 0) or 0
     original_price_str = plan["price"]
@@ -145,20 +121,49 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
             final_price_str = f"{final_price:g}"
         except (ValueError, TypeError):
             final_price_str = original_price_str
-        promo_line = ""
     else:
         discount_pct = 0
         final_price_str = original_price_str
-    price_block = (
-        f"💰 Original Price: ₹{original_price_str}\n"
-        f"🎁 Referral Discount: {discount_pct}%\n"
-        f"💳 Final Price: ₹{final_price_str}"
+
+    price_section = (
+        f"💰 <b>Original Price:</b> ₹{original_price_str}\n"
+        f"🎁 <b>Referral Discount:</b> {discount_pct}%\n"
+        f"💳 <b>Final Price:</b> ₹{final_price_str}"
     )
-    # Replace the first occurrence of ₹<price> with the full price block,
-    # then update any remaining occurrences (e.g. "Pay ₹X") to the final price.
-    payment_msg = payment_msg.replace(f"₹{original_price_str}", price_block, 1)
-    if discount_pct > 0:
-        payment_msg = payment_msg.replace(f"₹{original_price_str}", f"₹{final_price_str}")
+
+    # Payment message: use DB setting, fall back to built-in default template
+    _default_tpl = (
+        "💳 <b>Payment Details</b>\n\n"
+        "📦 <b>Plan:</b> {plan_name}\n"
+        "{price_section}\n"
+        "⌛ <b>Validity:</b> {plan_validity}\n\n"
+        "📲 Scan the QR code above using any UPI app.\n\n"
+        "✅ <b>Pay ₹{final_price_str}</b> to the <b>QR Code</b> shown above.\n"
+        "✓ After payment, click <b>✅ I Have Paid</b>\n\n"
+        "🆔 <b>Order:</b> #{order_id}"
+    )
+    payment_tpl = (await get_setting("payment_message")) or _default_tpl
+    _fmt_kwargs = dict(
+        plan_name=plan["name"],
+        plan_price=plan["price"],
+        plan_validity=plan["validity"],
+        order_id=order_id,
+        price_section=price_section,
+        final_price_str=final_price_str,
+    )
+    try:
+        payment_msg = payment_tpl.format(**_fmt_kwargs)
+    except (KeyError, ValueError, IndexError):
+        # Admin entered a malformed template — fall back to built-in default
+        logger.warning("payment_message template is malformed — using default")
+        payment_msg = _default_tpl.format(**_fmt_kwargs)
+
+    # For admin custom templates that use {plan_price} instead of {price_section}:
+    # post-process to inject the price block and update remaining price references.
+    if f"₹{original_price_str}" in payment_msg:
+        payment_msg = payment_msg.replace(f"₹{original_price_str}", price_section, 1)
+        if discount_pct > 0:
+            payment_msg = payment_msg.replace(f"₹{original_price_str}", f"₹{final_price_str}")
 
     # QR image: per-plan first, then global DB setting, then env var URL, then skip
     qr_image = plan.get("qr_image") or (await get_setting("qr_image")) or QR_IMAGE_URL
