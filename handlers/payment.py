@@ -149,13 +149,10 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
     else:
         discount_pct = 0
         final_price_str = original_price_str
-        promo_line = "\n✨ Use /refer to earn a discount on your next purchase!"
-
     price_block = (
         f"💰 Original Price: ₹{original_price_str}\n"
         f"🎁 Referral Discount: {discount_pct}%\n"
         f"💳 Final Price: ₹{final_price_str}"
-        f"{promo_line}"
     )
     # Replace the first occurrence of ₹<price> with the full price block,
     # then update any remaining occurrences (e.g. "Pay ₹X") to the final price.
