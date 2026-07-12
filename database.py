@@ -246,10 +246,10 @@ async def save_referral(user_id: int, referrer_id: int) -> bool:
     if result.modified_count == 0:
         return False  # already had a referrer, or user not found
 
-    # Increment the referrer's total_referrals counter.
+    # Increment the referrer's total_referrals counter and add 5% discount.
     await _users.update_one(
         {"_id": referrer_id},
-        {"$inc": {"total_referrals": 1}},
+        {"$inc": {"total_referrals": 1, "referral_discount": 5}},
     )
     logger.info("Referral recorded: user %s referred by %s", user_id, referrer_id)
     return True

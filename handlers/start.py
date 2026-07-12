@@ -157,10 +157,11 @@ async def cmd_start(message: Message, bot: Bot) -> None:
                     chat_id=referrer_id,
                     text=(
                         "🎉 <b>Congratulations!</b>\n\n"
-                        "You earned <b>5% Referral Discount</b>! 🥳\n\n"
+                        "A new user joined using your referral link.\n\n"
+                        "🎁 You earned <b>5% referral discount</b>.\n\n"
                         f"👥 <b>Total Referrals:</b> {info['total_referrals']}\n"
-                        f"🎁 <b>Current Discount:</b> {info['referral_discount']}%\n\n"
-                        "Keep inviting your friends to unlock even bigger savings! 🚀"
+                        f"💰 <b>Current Discount:</b> {info['referral_discount']}%\n\n"
+                        "Keep sharing your referral link and save more on your next purchase! 🚀"
                     ),
                     parse_mode="HTML",
                 )
