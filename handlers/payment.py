@@ -25,6 +25,7 @@ from database import (
     get_plan,
     get_all_plans,
     get_setting,
+    get_user_referral_info,
     set_pending_reminder,
     cancel_reminder,
 )
@@ -132,6 +133,27 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         # Admin entered a malformed template — fall back to built-in default
         logger.warning("payment_message template is malformed — using default")
         payment_msg = _default_tpl.format(**_fmt_kwargs)
+
+    # Referral discount: replace the price section if the user has a discount
+    referral_info = await get_user_referral_info(user.id)
+    discount_pct = referral_info.get("referral_discount", 0)
+    if discount_pct and discount_pct > 0:
+        original_price_str = plan["price"]
+        try:
+            final_price = round(float(original_price_str) * (1 - discount_pct / 100), 2)
+            final_price_str = f"{final_price:g}"
+        except (ValueError, TypeError):
+            final_price_str = original_price_str
+
+        price_block = (
+            f"💰 Original Price: ₹{original_price_str}\n"
+            f"🎁 Referral Discount: {discount_pct}%\n"
+            f"💳 Final Price: ₹{final_price_str}"
+        )
+        # Replace the first occurrence of ₹<price> with the full price block,
+        # then update any remaining occurrences (e.g. "Pay ₹X") to final price.
+        payment_msg = payment_msg.replace(f"₹{original_price_str}", price_block, 1)
+        payment_msg = payment_msg.replace(f"₹{original_price_str}", f"₹{final_price_str}")
 
     # QR image: per-plan first, then global DB setting, then env var URL, then skip
     qr_image = plan.get("qr_image") or (await get_setting("qr_image")) or QR_IMAGE_URL
