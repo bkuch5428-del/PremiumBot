@@ -62,6 +62,18 @@ _DEFAULT_WELCOME = (
 _DEFAULT_PAYMENT = (
     "💳 <b>Payment Details</b>\n\n"
     "📦 <b>Plan:</b> {plan_name}\n"
+    "{price_section}\n"
+    "⌛ <b>Validity:</b> {plan_validity}\n\n"
+    "📲 Scan the QR code above using any UPI app.\n\n"
+    "✅ <b>Pay ₹{final_price_str}</b> by scanning the <b>QR Code</b> above.\n"
+    "✓ After payment, click <b>✅ I Have Paid</b>\n\n"
+    "🆔 <b>Order:</b> #{order_id}"
+)
+
+# Old default kept only for the one-time migration below.
+_OLD_DEFAULT_PAYMENT = (
+    "💳 <b>Payment Details</b>\n\n"
+    "📦 <b>Plan:</b> {plan_name}\n"
     "💰 <b>Amount:</b> ₹{plan_price}\n"
     "⌛ <b>Validity:</b> {plan_validity}\n\n"
     "📲 Scan the QR code above using any UPI app.\n\n"
@@ -147,6 +159,18 @@ async def init_db() -> None:
         {"$setOnInsert": {"seq": 0}},
         upsert=True,
     )
+
+    # One-time migration: replace the old payment_message template (which had
+    # "Amount:" and plain-text pay line) with the new one that uses {price_section}
+    # and {final_price_str}. Only runs if the stored value still matches the old
+    # default exactly, so admin-customised templates are never overwritten.
+    old_doc = await _settings.find_one({"_id": "payment_message"})
+    if old_doc and old_doc.get("value") == _OLD_DEFAULT_PAYMENT:
+        await _settings.update_one(
+            {"_id": "payment_message"},
+            {"$set": {"value": _DEFAULT_PAYMENT}},
+        )
+        logger.info("Migrated payment_message to new price_section template")
 
     logger.info("MongoDB connected — database %r ready", DB_NAME)
 

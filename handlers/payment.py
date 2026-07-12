@@ -131,14 +131,15 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         f"💳 <b>Final Price:</b> ₹{final_price_str}"
     )
 
-    # Payment message: use DB setting, fall back to built-in default template
+    # Payment message: use DB setting (already migrated to new template on startup),
+    # fall back to the built-in default if the setting is empty.
     _default_tpl = (
         "💳 <b>Payment Details</b>\n\n"
         "📦 <b>Plan:</b> {plan_name}\n"
         "{price_section}\n"
         "⌛ <b>Validity:</b> {plan_validity}\n\n"
         "📲 Scan the QR code above using any UPI app.\n\n"
-        "✅ <b>Pay ₹{final_price_str}</b> to the <b>QR Code</b> shown above.\n"
+        "✅ <b>Pay ₹{final_price_str}</b> by scanning the <b>QR Code</b> above.\n"
         "✓ After payment, click <b>✅ I Have Paid</b>\n\n"
         "🆔 <b>Order:</b> #{order_id}"
     )
@@ -157,13 +158,6 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         # Admin entered a malformed template — fall back to built-in default
         logger.warning("payment_message template is malformed — using default")
         payment_msg = _default_tpl.format(**_fmt_kwargs)
-
-    # For admin custom templates that use {plan_price} instead of {price_section}:
-    # post-process to inject the price block and update remaining price references.
-    if f"₹{original_price_str}" in payment_msg:
-        payment_msg = payment_msg.replace(f"₹{original_price_str}", price_section, 1)
-        if discount_pct > 0:
-            payment_msg = payment_msg.replace(f"₹{original_price_str}", f"₹{final_price_str}")
 
     # QR image: per-plan first, then global DB setting, then env var URL, then skip
     qr_image = plan.get("qr_image") or (await get_setting("qr_image")) or QR_IMAGE_URL
