@@ -127,6 +127,11 @@ async def cmd_start(message: Message, bot: Bot) -> None:
     logger.info("/start from user %s", message.from_user.id)
     user = message.from_user
 
+    # Clear any active payment/proof state so the user is never stuck.
+    # This does not touch MongoDB — orders remain intact.
+    from handlers.payment import clear_payment_state
+    clear_payment_state(user.id)
+
     # Parse deep-link referral argument: /start <referrer_user_id>
     referrer_id: int | None = None
     parts = (message.text or "").split(maxsplit=1)

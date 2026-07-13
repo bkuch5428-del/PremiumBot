@@ -269,15 +269,23 @@ async def callback_cancel_proof(call: CallbackQuery) -> None:
 
 # ── Payment Proof handler ─────────────────────────────────────────────────────
 
+def clear_payment_state(user_id: int) -> None:
+    """Remove any awaiting-proof state for a user. Does NOT touch MongoDB."""
+    _awaiting_proof.pop(user_id, None)
+
+
 async def _user_is_awaiting_proof(message: Message) -> bool:
-    return message.from_user is not None and message.from_user.id in _awaiting_proof
+    """True only when the user has an open proof session AND did not send a command."""
+    if message.from_user is None:
+        return False
+    # Never intercept commands — let them fall through to their own handlers.
+    if message.text and message.text.startswith("/"):
+        return False
+    return message.from_user.id in _awaiting_proof
 
 
 @router.message(_user_is_awaiting_proof, F.photo | F.text)
 async def handle_payment_proof(message: Message, bot: Bot) -> None:
-    if message.text and message.text.startswith("/"):
-        return
-
     user = message.from_user
     info = _awaiting_proof.pop(user.id, None)
     if not info:
