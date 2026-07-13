@@ -130,6 +130,7 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
                 plan_id=plan_id,
                 access_link=plan["access_link"],
                 final_price=final_price_str,
+                referral_discount_used=discount_pct,
             )
             order_id = candidate
             break

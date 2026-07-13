@@ -624,6 +624,18 @@ async def delete_plan(plan_id: int) -> None:
 
 # ── Orders ────────────────────────────────────────────────────────────────────
 
+async def consume_referral_discount(user_id: int) -> None:
+    """Reset a user's referral discount and referral count to 0 after a
+    discounted purchase is approved.  The user keeps their referral_code and
+    referred_by so future referrals still work and new ones build a fresh
+    discount from 0%."""
+    await _users.update_one(
+        {"_id": user_id},
+        {"$set": {"referral_discount": 0, "total_referrals": 0}},
+    )
+    logger.info("Referral discount consumed for user %s — reset to 0%%", user_id)
+
+
 async def create_order(
     user_id: int,
     plan_name: str,
@@ -633,22 +645,29 @@ async def create_order(
     plan_id: int | None = None,
     access_link: str = "",
     final_price: str = "",
+    referral_discount_used: int = 0,
 ) -> None:
-    """Insert a new order row with status 'created'."""
+    """Insert a new order row with status 'created'.
+
+    ``referral_discount_used`` records the discount percentage (0–100) that
+    was applied to this order.  A non-zero value causes the referral discount
+    to be consumed when the order is approved.
+    """
     try:
         await _orders.insert_one({
-            "_id":                order_id,
-            "user_id":            user_id,
-            "plan_name":          plan_name,
-            "plan_price":         plan_price,
-            "final_price":        final_price or plan_price,
-            "plan_validity":      plan_validity,
-            "payment_status":     "created",
-            "created_at":         datetime.now(timezone.utc),
-            "subscription_start": None,
-            "subscription_end":   None,
-            "plan_id":            plan_id,
-            "access_link":        access_link,
+            "_id":                    order_id,
+            "user_id":                user_id,
+            "plan_name":              plan_name,
+            "plan_price":             plan_price,
+            "final_price":            final_price or plan_price,
+            "plan_validity":          plan_validity,
+            "payment_status":         "created",
+            "created_at":             datetime.now(timezone.utc),
+            "subscription_start":     None,
+            "subscription_end":       None,
+            "plan_id":                plan_id,
+            "access_link":            access_link,
+            "referral_discount_used": referral_discount_used,
         })
     except Exception as exc:
         # Preserve the SQLite-era "UNIQUE" signal so callers retrying on
@@ -709,6 +728,12 @@ async def approve_order(order_id: str) -> dict | None:
     # (scoped by order_id so a newer schedule from a repeat Buy Now isn't
     # accidentally wiped if an older order gets approved late).
     await cancel_reminder(doc["user_id"], order_id)
+
+    # Consume the referral discount if one was applied to this order.
+    # Only an approved payment triggers consumption; pending/rejected/cancelled
+    # orders never reach this branch.
+    if int(doc.get("referral_discount_used", 0) or 0) > 0:
+        await consume_referral_discount(doc["user_id"])
 
     return {
         "user_id":          doc["user_id"],
