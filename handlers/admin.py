@@ -1213,11 +1213,15 @@ async def cb_ref_stats(call: CallbackQuery) -> None:
     await call.answer()
     s = await get_referral_stats()
     status = "✅ ON" if s["enabled"] else "❌ OFF"
+    max_refs_display = str(s["max_referrals"]) if s["max_referrals"] > 0 else "Unlimited"
     try:
         await call.message.edit_text(
             "📊 <b>Referral Statistics</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🔘 <b>Referral System:</b>          {status}\n"
+            f"🎁 <b>Referral Reward:</b>           {s['reward_pct']}%\n"
+            f"💰 <b>Maximum Discount:</b>          {s['max_discount']}%\n"
+            f"👥 <b>Maximum Referrals:</b>         {max_refs_display}\n\n"
             f"👥 <b>Total Referrers:</b>           {s['total_referrers']}\n"
             f"✅ <b>Total Successful Referrals:</b> {s['total_referrals']}\n"
             "━━━━━━━━━━━━━━━━━━━━━",
@@ -1262,6 +1266,150 @@ async def cb_ref_reset_confirm(call: CallbackQuery) -> None:
         )
     except Exception:
         pass
+
+
+# ── Referral: Edit configurable settings ──────────────────────────────────────
+
+def _referral_kb_back() -> InlineKeyboardMarkup:
+    """Quick back-to-referral-panel keyboard used in edit prompts."""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Cancel", callback_data="admin_referral")]]
+    )
+
+
+# ── Edit Referral Reward % ────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "admin_ref_reward")
+async def cb_ref_reward(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    current = (await get_setting("referral_reward_pct", "5")) or "5"
+    _state[call.from_user.id] = {"step": "ref_reward:value", "data": {}}
+    try:
+        await call.message.edit_text(
+            f"✏️ <b>Edit Referral Reward (%)</b>\n\n"
+            f"Current value: <b>{current}%</b>\n\n"
+            "Send the new reward percentage (1–100).\n"
+            "Example: <code>5</code> → every referral gives 5% discount.",
+            reply_markup=_referral_kb_back(),
+        )
+    except Exception:
+        await call.message.answer(
+            f"✏️ <b>Edit Referral Reward (%)</b>\n\nCurrent: <b>{current}%</b>\n\n"
+            "Send the new value (1–100):",
+            reply_markup=_referral_kb_back(),
+        )
+
+
+@router.message(_in_state("ref_reward:value"), F.text)
+async def handle_ref_reward_value(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if not raw.isdigit() or not (1 <= int(raw) <= 100):
+        await message.answer("⚠️ Please send a number between 1 and 100:")
+        return
+    _state.pop(message.from_user.id, None)
+    await set_setting("referral_reward_pct", raw)
+    await message.answer(
+        f"✅ Referral reward set to <b>{raw}%</b> per referral.",
+        reply_markup=referral_settings_keyboard(
+            (await get_setting("referral_enabled", "1")) == "1"
+        ),
+    )
+
+
+# ── Edit Maximum Referral Discount % ──────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "admin_ref_maxdiscount")
+async def cb_ref_maxdiscount(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    current = (await get_setting("max_referral_discount", "100")) or "100"
+    _state[call.from_user.id] = {"step": "ref_maxdiscount:value", "data": {}}
+    try:
+        await call.message.edit_text(
+            f"✏️ <b>Edit Maximum Referral Discount (%)</b>\n\n"
+            f"Current value: <b>{current}%</b>\n\n"
+            "Send the new maximum discount percentage (1–100).\n"
+            "No user's referral discount will ever exceed this value.",
+            reply_markup=_referral_kb_back(),
+        )
+    except Exception:
+        await call.message.answer(
+            f"✏️ <b>Edit Maximum Referral Discount (%)</b>\n\nCurrent: <b>{current}%</b>\n\n"
+            "Send the new value (1–100):",
+            reply_markup=_referral_kb_back(),
+        )
+
+
+@router.message(_in_state("ref_maxdiscount:value"), F.text)
+async def handle_ref_maxdiscount_value(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if not raw.isdigit() or not (1 <= int(raw) <= 100):
+        await message.answer("⚠️ Please send a number between 1 and 100:")
+        return
+    _state.pop(message.from_user.id, None)
+    await set_setting("max_referral_discount", raw)
+    await message.answer(
+        f"✅ Maximum referral discount set to <b>{raw}%</b>.",
+        reply_markup=referral_settings_keyboard(
+            (await get_setting("referral_enabled", "1")) == "1"
+        ),
+    )
+
+
+# ── Edit Maximum Referrals per user ───────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "admin_ref_maxreferrals")
+async def cb_ref_maxreferrals(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    current = (await get_setting("max_referrals", "0")) or "0"
+    display = current if current != "0" else "Unlimited"
+    _state[call.from_user.id] = {"step": "ref_maxreferrals:value", "data": {}}
+    try:
+        await call.message.edit_text(
+            f"👥 <b>Edit Maximum Referrals</b>\n\n"
+            f"Current value: <b>{display}</b>\n\n"
+            "Send the maximum number of referrals counted per user.\n"
+            "Send <code>0</code> for unlimited.",
+            reply_markup=_referral_kb_back(),
+        )
+    except Exception:
+        await call.message.answer(
+            f"👥 <b>Edit Maximum Referrals</b>\n\nCurrent: <b>{display}</b>\n\n"
+            "Send the new value (0 = unlimited):",
+            reply_markup=_referral_kb_back(),
+        )
+
+
+@router.message(_in_state("ref_maxreferrals:value"), F.text)
+async def handle_ref_maxreferrals_value(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer("⚠️ Please send a non-negative whole number (0 = unlimited):")
+        return
+    _state.pop(message.from_user.id, None)
+    await set_setting("max_referrals", raw)
+    display = raw if raw != "0" else "Unlimited"
+    await message.answer(
+        f"✅ Maximum referrals per user set to <b>{display}</b>.",
+        reply_markup=referral_settings_keyboard(
+            (await get_setting("referral_enabled", "1")) == "1"
+        ),
+    )
 
 
 # ── Referral: Add Referral (admin manual credit) ──────────────────────────────

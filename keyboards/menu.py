@@ -263,13 +263,16 @@ def referral_settings_keyboard(enabled: bool) -> InlineKeyboardMarkup:
     status = "✅ Enabled" if enabled else "❌ Disabled"
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=f"Status: {status}", callback_data="admin_ref_noop")],
-            [InlineKeyboardButton(text="✅ Enable Referral System",  callback_data="admin_ref_enable")],
-            [InlineKeyboardButton(text="❌ Disable Referral System", callback_data="admin_ref_disable")],
-            [InlineKeyboardButton(text="➕ Add Referral",            callback_data="admin_ref_add")],
-            [InlineKeyboardButton(text="📊 Referral Statistics",     callback_data="admin_ref_stats")],
-            [InlineKeyboardButton(text="🔄 Reset Referral Data",     callback_data="admin_ref_reset")],
-            [InlineKeyboardButton(text="⬅️ Back",                    callback_data="admin_cancel")],
+            [InlineKeyboardButton(text=f"Status: {status}",                    callback_data="admin_ref_noop")],
+            [InlineKeyboardButton(text="✅ Enable Referral System",             callback_data="admin_ref_enable")],
+            [InlineKeyboardButton(text="❌ Disable Referral System",            callback_data="admin_ref_disable")],
+            [InlineKeyboardButton(text="✏️ Edit Referral Reward (%)",           callback_data="admin_ref_reward")],
+            [InlineKeyboardButton(text="✏️ Edit Maximum Referral Discount (%)", callback_data="admin_ref_maxdiscount")],
+            [InlineKeyboardButton(text="👥 Edit Maximum Referrals",             callback_data="admin_ref_maxreferrals")],
+            [InlineKeyboardButton(text="➕ Add Referral",                       callback_data="admin_ref_add")],
+            [InlineKeyboardButton(text="📊 Referral Statistics",                callback_data="admin_ref_stats")],
+            [InlineKeyboardButton(text="🔄 Reset Referral Data",                callback_data="admin_ref_reset")],
+            [InlineKeyboardButton(text="⬅️ Back",                               callback_data="admin_cancel")],
         ]
     )
 

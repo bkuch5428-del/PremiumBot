@@ -145,7 +145,10 @@ async def init_db() -> None:
         ("reminder_second_delay_min", "1440"),  # 24 hours
         ("reminder_first_message",   _DEFAULT_REMINDER_FIRST_MESSAGE),   # 15-minute reminder
         ("reminder_second_message",  _DEFAULT_REMINDER_SECOND_MESSAGE),  # 24-hour reminder
-        ("referral_enabled",         "1"),  # referral system on by default
+        ("referral_enabled",         "1"),   # referral system on by default
+        ("referral_reward_pct",      "5"),   # discount % awarded per referral
+        ("max_referral_discount",    "100"), # maximum total discount a user can earn
+        ("max_referrals",            "0"),   # max referrals per referrer (0 = unlimited)
     ]
     for key, value in _defaults:
         await _settings.update_one(
@@ -251,23 +254,50 @@ async def save_referral(user_id: int, referrer_id: int) -> bool:
     if result.modified_count == 0:
         return False  # already had a referrer, or user not found
 
-    # Increment the referrer's total_referrals counter and add 5% discount.
+    # Read config values once.
+    reward_pct   = max(1, int((await get_setting("referral_reward_pct",   "5"))   or 5))
+    max_discount = max(1, int((await get_setting("max_referral_discount", "100")) or 100))
+    max_refs     =         int((await get_setting("max_referrals",        "0"))   or 0)
+
+    # Fetch the referrer's current counters.
+    referrer_doc = await _users.find_one(
+        {"_id": referrer_id},
+        {"total_referrals": 1, "referral_discount": 1},
+    )
+    if not referrer_doc:
+        logger.info("Referral recorded (referrer %s not found in DB)", referrer_id)
+        return True  # new-user link still saved even if referrer is gone
+
+    current_referrals = int(referrer_doc.get("total_referrals",   0))
+    current_discount  = int(referrer_doc.get("referral_discount", 0))
+
+    # Honour max_referrals limit (0 = unlimited).
+    if max_refs > 0 and current_referrals >= max_refs:
+        logger.info(
+            "Referral limit reached for referrer %s (%d/%d) — no credit added",
+            referrer_id, current_referrals, max_refs,
+        )
+        return True  # referred_by already recorded for the new user; referrer just gets no more credit
+
+    new_referrals = current_referrals + 1
+    new_discount  = min(current_discount + reward_pct, max_discount)
+
     await _users.update_one(
         {"_id": referrer_id},
-        {"$inc": {"total_referrals": 1, "referral_discount": 5}},
+        {"$set": {"total_referrals": new_referrals, "referral_discount": new_discount}},
     )
-    logger.info("Referral recorded: user %s referred by %s", user_id, referrer_id)
+    logger.info(
+        "Referral recorded: user %s referred by %s → referrals=%d discount=%d%%",
+        user_id, referrer_id, new_referrals, new_discount,
+    )
     return True
-
-
-_MAX_REFERRAL_DISCOUNT = 100  # cap at 100 %
 
 
 async def admin_add_referrals(user_id: int, count: int) -> dict | None:
     """
     Admin helper: manually credit `count` referrals to a user.
-    Increments total_referrals by count and referral_discount by count*5,
-    capped at _MAX_REFERRAL_DISCOUNT.
+    Uses the same referral_reward_pct, max_referral_discount, and max_referrals
+    settings as the live referral system.
     Does NOT trigger notifications or affect global referral statistics.
     Returns updated {total_referrals, referral_discount}, or None if user not found.
     """
@@ -278,11 +308,20 @@ async def admin_add_referrals(user_id: int, count: int) -> dict | None:
     if doc is None:
         return None
 
+    reward_pct   = max(1, int((await get_setting("referral_reward_pct",   "5"))   or 5))
+    max_discount = max(1, int((await get_setting("max_referral_discount", "100")) or 100))
+    max_refs     =         int((await get_setting("max_referrals",        "0"))   or 0)
+
     current_referrals = int(doc.get("total_referrals",   0))
     current_discount  = int(doc.get("referral_discount", 0))
 
+    # Respect max_referrals — admin cannot exceed the configured limit either.
+    if max_refs > 0:
+        allowed = max(0, max_refs - current_referrals)
+        count = min(count, allowed)
+
     new_referrals = current_referrals + count
-    new_discount  = min(current_discount + count * 5, _MAX_REFERRAL_DISCOUNT)
+    new_discount  = min(current_discount + count * reward_pct, max_discount)
 
     await _users.update_one(
         {"_id": user_id},
@@ -299,7 +338,7 @@ async def admin_add_referrals(user_id: int, count: int) -> dict | None:
 
 
 async def get_referral_stats() -> dict:
-    """Return referral statistics for the admin referral settings panel."""
+    """Return referral statistics and config for the admin referral settings panel."""
     enabled = (await get_setting("referral_enabled", "1")) == "1"
     total_referrers = await _users.count_documents({"total_referrals": {"$gt": 0}})
     agg_cursor = _users.aggregate([
@@ -307,10 +346,16 @@ async def get_referral_stats() -> dict:
     ])
     agg_docs = await agg_cursor.to_list(length=1)
     total_referrals = int(agg_docs[0]["total"]) if agg_docs else 0
+    reward_pct   = int((await get_setting("referral_reward_pct",   "5"))   or 5)
+    max_discount = int((await get_setting("max_referral_discount", "100")) or 100)
+    max_refs     = int((await get_setting("max_referrals",         "0"))   or 0)
     return {
         "enabled":          enabled,
         "total_referrers":  total_referrers,
         "total_referrals":  total_referrals,
+        "reward_pct":       reward_pct,
+        "max_discount":     max_discount,
+        "max_referrals":    max_refs,
     }
 
 
