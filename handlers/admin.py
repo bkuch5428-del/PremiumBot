@@ -21,7 +21,7 @@ import logging
 
 from aiogram import Router, Bot, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramForbiddenError
 
 from config import ADMIN_IDS, SOURCE_CHANNEL_ID
@@ -1272,7 +1272,6 @@ async def cb_ref_reset_confirm(call: CallbackQuery) -> None:
 
 def _referral_kb_back() -> InlineKeyboardMarkup:
     """Quick back-to-referral-panel keyboard used in edit prompts."""
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="⬅️ Cancel", callback_data="admin_referral")]]
     )
