@@ -23,6 +23,7 @@ from database import (
     update_order_status,
     approve_order,
     get_order_final_price,
+    user_has_active_plan,
     get_plan,
     get_all_plans,
     get_setting,
@@ -80,6 +81,17 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         return
 
     user = call.from_user
+
+    # Block repurchase of an already-active plan (approved + not yet expired).
+    # Pending or rejected payments do not count — only approved subscriptions.
+    if await user_has_active_plan(user.id, plan_id):
+        await call.message.answer(
+            "✅ <b>You have already purchased this plan.</b>\n\n"
+            "Thank you for your purchase! ❤️\n\n"
+            "You already have access to this plan."
+        )
+        return
+
     await log_payment_started(bot, user.id, user.first_name, plan_title=plan["name"])
 
     # Referral discount: calculate first so final_price is available when the

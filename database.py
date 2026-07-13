@@ -711,6 +711,21 @@ async def get_order_final_price(order_id: str) -> str | None:
     return doc.get("final_price") or doc.get("plan_price", "—")
 
 
+async def user_has_active_plan(user_id: int, plan_id: int) -> bool:
+    """Return True if the user has an approved, still-valid subscription for this exact plan."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    doc = await _orders.find_one(
+        {
+            "user_id":        user_id,
+            "plan_id":        plan_id,
+            "payment_status": "approved",
+            "subscription_end": {"$gte": now_iso},
+        },
+        {"_id": 1},
+    )
+    return doc is not None
+
+
 async def get_user_active_subscription(user_id: int) -> dict | None:
     """Return the most recent approved/active order for a user, or None."""
     now_iso = datetime.now(timezone.utc).isoformat()
