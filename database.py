@@ -216,16 +216,56 @@ async def save_user(user_id: int, username: str | None, first_name: str) -> bool
         {
             "$set": {"username": username, "first_name": first_name},
             "$setOnInsert": {
-                "joined_at":        datetime.now(timezone.utc),
-                "referral_code":    user_id,   # referral_code == user_id
-                "referred_by":      None,
-                "total_referrals":  0,
-                "referral_discount": 0,
+                "joined_at":                 datetime.now(timezone.utc),
+                "referral_code":             user_id,   # referral_code == user_id
+                "referred_by":               None,
+                "total_referrals":           0,
+                "referral_discount":         0,
+                "referral_reminder_sent":    False,
+                "referral_reminder_due_at":  None,
             },
         },
         upsert=True,
     )
     return is_new
+
+
+async def schedule_referral_reminder(user_id: int, due_at: datetime) -> None:
+    """Schedule a one-time referral reminder for a new user.
+    No-op if the reminder has already been sent or scheduled."""
+    await _users.update_one(
+        {"_id": user_id, "referral_reminder_sent": False},
+        {"$set": {"referral_reminder_due_at": due_at}},
+    )
+
+
+async def get_due_referral_reminders(now: datetime) -> list[int]:
+    """Return user_ids whose referral reminder is due and not yet sent."""
+    cursor = _users.find(
+        {
+            "referral_reminder_sent":   False,
+            "referral_reminder_due_at": {"$ne": None, "$lte": now},
+        },
+        {"_id": 1},
+    )
+    return [doc["_id"] async for doc in cursor]
+
+
+async def mark_referral_reminder_sent(user_id: int) -> None:
+    """Mark the referral reminder as sent so it is never sent again."""
+    await _users.update_one(
+        {"_id": user_id},
+        {"$set": {"referral_reminder_sent": True}},
+    )
+
+
+async def has_any_approved_order(user_id: int) -> bool:
+    """Return True if the user has at least one approved (purchased) order."""
+    doc = await _orders.find_one(
+        {"user_id": user_id, "payment_status": "approved"},
+        {"_id": 1},
+    )
+    return doc is not None
 
 
 async def save_referral(user_id: int, referrer_id: int) -> bool:

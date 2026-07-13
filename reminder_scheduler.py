@@ -26,8 +26,11 @@ from database import (
     get_due_second_reminders,
     mark_first_reminder_sent,
     mark_second_reminder_sent,
+    get_due_referral_reminders,
+    mark_referral_reminder_sent,
+    has_any_approved_order,
 )
-from keyboards.menu import reminder_buy_now_keyboard
+from keyboards.menu import reminder_buy_now_keyboard, referral_reminder_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -113,3 +116,25 @@ async def _tick(bot: Bot) -> None:
         except Exception:
             logger.warning("Failed to send final reminder to user %s", user_id)
         await mark_second_reminder_sent(user_id, order_id)
+
+    # ── One-time referral reminder ────────────────────────────────────────────
+    for user_id in await get_due_referral_reminders(now):
+        # Skip if the user has already made a purchase.
+        if await has_any_approved_order(user_id):
+            await mark_referral_reminder_sent(user_id)
+            continue
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "🎁 <b>Want to save on your purchase?</b>\n\n"
+                    "Invite your friends and earn discounts automatically.\n\n"
+                    "🏷️ Every valid referral gives you a discount on your next purchase.\n\n"
+                    "Tap below to start earning 👇"
+                ),
+                reply_markup=referral_reminder_keyboard(),
+            )
+        except Exception:
+            logger.warning("Failed to send referral reminder to user %s", user_id)
+        # Mark sent regardless of delivery — never retry this reminder.
+        await mark_referral_reminder_sent(user_id)

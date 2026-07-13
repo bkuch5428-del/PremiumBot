@@ -289,6 +289,17 @@ def referral_reset_confirm_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+# ── Referral reminder keyboard ────────────────────────────────────────────────
+
+def referral_reminder_keyboard() -> InlineKeyboardMarkup:
+    """Inline keyboard sent with the one-time referral reminder."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🏷️ Get Discount", callback_data="open_refer")],
+        ]
+    )
+
+
 # ── Referral user-facing ──────────────────────────────────────────────────────
 
 def refer_share_keyboard(referral_link: str) -> InlineKeyboardMarkup:

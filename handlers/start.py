@@ -1,11 +1,16 @@
 import asyncio
 import logging
+from datetime import datetime, timezone, timedelta
 
 from aiogram import Router, Bot
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 
-from database import save_user, save_referral, get_user_referral_info, get_all_plans, get_plan, get_setting, get_start_demo
+from database import (
+    save_user, save_referral, get_user_referral_info,
+    get_all_plans, get_plan, get_setting, get_start_demo,
+    schedule_referral_reminder,
+)
 from keyboards.menu import plans_list_keyboard, plan_detail_keyboard, main_menu_keyboard
 from handlers.log_channel import log_new_user, log_plan_selected
 
@@ -175,6 +180,12 @@ async def cmd_start(message: Message, bot: Bot) -> None:
 
     if is_new:
         await log_new_user(bot, user.id, user.first_name, user.username)
+        # Schedule the one-time referral reminder 30 minutes after first start.
+        due_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+        try:
+            await schedule_referral_reminder(user.id, due_at)
+        except Exception:
+            logger.exception("Failed to schedule referral reminder for user %s", user.id)
 
     # Send start demo videos (if enabled by admin) — always, regardless of plans
     await send_start_demo_videos(bot, message.chat.id)
