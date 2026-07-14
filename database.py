@@ -223,6 +223,9 @@ async def save_user(user_id: int, username: str | None, first_name: str) -> bool
                 "referral_discount":         0,
                 "referral_reminder_sent":    False,
                 "referral_reminder_due_at":  None,
+                "plan_interest_plan_id":     None,
+                "plan_interest_due_at":      None,
+                "plan_interest_sent":        False,
             },
         },
         upsert=True,
@@ -256,6 +259,63 @@ async def mark_referral_reminder_sent(user_id: int) -> None:
     await _users.update_one(
         {"_id": user_id},
         {"$set": {"referral_reminder_sent": True}},
+    )
+
+
+async def save_plan_interest(user_id: int, plan_id: int, due_at: datetime) -> None:
+    """Record the last plan the user viewed without buying.
+
+    Overwrites any previous interest so that viewing a different plan always
+    replaces the old one — the reminder always fires for the most recent plan.
+    Resets plan_interest_sent to False so a fresh reminder can be scheduled.
+    """
+    await _users.update_one(
+        {"_id": user_id},
+        {"$set": {
+            "plan_interest_plan_id": plan_id,
+            "plan_interest_due_at":  due_at,
+            "plan_interest_sent":    False,
+        }},
+    )
+
+
+async def clear_plan_interest(user_id: int) -> None:
+    """Suppress the plan-interest reminder when the user clicks Buy Now.
+
+    Sets plan_interest_sent to True so the scheduler skips this user even if
+    the due timestamp has not yet elapsed.  Does not clear plan_interest_plan_id
+    so the stored plan is still available for auditing.
+    """
+    await _users.update_one(
+        {"_id": user_id},
+        {"$set": {"plan_interest_sent": True}},
+    )
+
+
+async def get_due_plan_interest_reminders(now: datetime) -> list[dict]:
+    """Return users whose plan-interest reminder is due and not yet sent.
+
+    Each item is {"user_id": int, "plan_id": int}.
+    """
+    cursor = _users.find(
+        {
+            "plan_interest_sent":    False,
+            "plan_interest_plan_id": {"$ne": None},
+            "plan_interest_due_at":  {"$ne": None, "$lte": now},
+        },
+        {"_id": 1, "plan_interest_plan_id": 1},
+    )
+    return [
+        {"user_id": doc["_id"], "plan_id": doc["plan_interest_plan_id"]}
+        async for doc in cursor
+    ]
+
+
+async def mark_plan_interest_sent(user_id: int) -> None:
+    """Mark the plan-interest reminder as sent so it never fires again."""
+    await _users.update_one(
+        {"_id": user_id},
+        {"$set": {"plan_interest_sent": True}},
     )
 
 

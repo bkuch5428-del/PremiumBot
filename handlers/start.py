@@ -10,6 +10,7 @@ from database import (
     save_user, save_referral, get_user_referral_info,
     get_all_plans, get_plan, get_setting, get_start_demo,
     schedule_referral_reminder,
+    save_plan_interest,
 )
 from keyboards.menu import plans_list_keyboard, plan_detail_keyboard, main_menu_keyboard
 from handlers.log_channel import log_new_user, log_plan_selected
@@ -264,6 +265,14 @@ async def callback_plan(call: CallbackQuery, bot: Bot) -> None:
             plan_validity=plan["validity"],
         )
     await call.message.answer(plan_text, reply_markup=plan_detail_keyboard(plan_id))
+
+    # Record plan interest: if the user never clicks Buy Now, a reminder fires
+    # 30 minutes from now.  Viewing a different plan overwrites this safely.
+    due_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+    try:
+        await save_plan_interest(call.from_user.id, plan_id, due_at)
+    except Exception:
+        logger.exception("Failed to save plan interest for user %s plan %s", call.from_user.id, plan_id)
 
 
 # ── Back to plan list ─────────────────────────────────────────────────────────

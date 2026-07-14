@@ -208,6 +208,20 @@ def plans_list_keyboard(plans: list[dict]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def plan_interest_reminder_keyboard(plan_id: int) -> InlineKeyboardMarkup:
+    """Keyboard sent with the plan-interest reminder.
+
+    'Buy Now' opens the exact plan the user last viewed.
+    'Get Discount' opens the referral page.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Buy Now",        callback_data=f"buy:{plan_id}")],
+            [InlineKeyboardButton(text="🏷️ Get Discount",   callback_data="open_refer")],
+        ]
+    )
+
+
 def plan_detail_keyboard(plan_id: int) -> InlineKeyboardMarkup:
     """Plan detail screen — Buy Now + Back."""
     return InlineKeyboardMarkup(

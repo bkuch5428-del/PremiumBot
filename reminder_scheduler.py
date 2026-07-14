@@ -29,8 +29,11 @@ from database import (
     get_due_referral_reminders,
     mark_referral_reminder_sent,
     has_any_approved_order,
+    get_due_plan_interest_reminders,
+    mark_plan_interest_sent,
+    user_has_active_plan,
 )
-from keyboards.menu import reminder_buy_now_keyboard, referral_reminder_keyboard
+from keyboards.menu import reminder_buy_now_keyboard, referral_reminder_keyboard, plan_interest_reminder_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -138,3 +141,28 @@ async def _tick(bot: Bot) -> None:
             logger.warning("Failed to send referral reminder to user %s", user_id)
         # Mark sent regardless of delivery — never retry this reminder.
         await mark_referral_reminder_sent(user_id)
+
+    # ── Plan-interest reminder ────────────────────────────────────────────────
+    for item in await get_due_plan_interest_reminders(now):
+        user_id = item["user_id"]
+        plan_id = item["plan_id"]
+        # Skip if the user has already purchased this specific plan.
+        if await user_has_active_plan(user_id, plan_id):
+            await mark_plan_interest_sent(user_id)
+            continue
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "🤔 <b>Still thinking?</b>\n\n"
+                    "The plan you viewed is still waiting for you.\n\n"
+                    "💰 Don't forget—you can reduce the price by using "
+                    "<b>🏷️ Get Discount</b> before purchasing.\n\n"
+                    "✨ Your referral discount will be applied automatically during checkout."
+                ),
+                reply_markup=plan_interest_reminder_keyboard(plan_id),
+            )
+        except Exception:
+            logger.warning("Failed to send plan-interest reminder to user %s", user_id)
+        # Mark sent regardless of delivery outcome — never retry this reminder.
+        await mark_plan_interest_sent(user_id)

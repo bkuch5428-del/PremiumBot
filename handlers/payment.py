@@ -30,6 +30,7 @@ from database import (
     get_user_referral_info,
     set_pending_reminder,
     cancel_reminder,
+    clear_plan_interest,
 )
 from keyboards.menu import (
     payment_details_keyboard,
@@ -93,6 +94,12 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         return
 
     await log_payment_started(bot, user.id, user.first_name, plan_title=plan["name"])
+
+    # User clicked Buy Now — suppress any pending plan-interest reminder.
+    try:
+        await clear_plan_interest(user.id)
+    except Exception:
+        logger.exception("Failed to clear plan interest for user %s", user.id)
 
     # Referral discount: calculate first so final_price is available when the
     # order document is created and stored in MongoDB.
