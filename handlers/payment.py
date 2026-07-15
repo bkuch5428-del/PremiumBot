@@ -83,14 +83,40 @@ async def _create_payment_vc(order_id: str, amount: str) -> dict | None:
 
     try:
         async with aiohttp.ClientSession() as session:
-            logger.info("CALLING VC CREATE API")
+            payload = {"order_id": order_id, "amount": amount}
+            logger.info(
+                "CALLING VC CREATE API — url=%s params=api_key=*** payload=%s",
+                VC_CREATE_URL, payload,
+            )
             async with session.post(
                 VC_CREATE_URL,
-                data={"api_key": VC_API_KEY, "order_id": order_id, "amount": amount},
+                params={"api_key": VC_API_KEY},
+                data=payload,
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
-                data = await resp.json(content_type=None)
-                logger.info("VC RESPONSE: %s", data)
+                http_status = resp.status
+                raw_text = await resp.text()
+                logger.info(
+                    "VC CREATE API HTTP %s — raw body: %r", http_status, raw_text
+                )
+
+                if not raw_text.strip():
+                    logger.error(
+                        "VC create-payment returned empty body (HTTP %s) for order %s",
+                        http_status, order_id,
+                    )
+                    return None
+
+                try:
+                    data = __import__("json").loads(raw_text)
+                except Exception:
+                    logger.error(
+                        "VC create-payment returned non-JSON (HTTP %s) for order %s — body: %r",
+                        http_status, order_id, raw_text,
+                    )
+                    return None
+
+                logger.info("VC RESPONSE parsed: %s", data)
 
                 status = str(data.get("status", "")).lower()
                 if status != "success":
