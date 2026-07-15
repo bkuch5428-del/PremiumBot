@@ -165,6 +165,7 @@ async def _verify_payment_vc(order_id: str, amount: str) -> str:
 async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
     """User tapped Buy Now — load plan from DB, generate order, show payment details."""
     logger.info("BUY CALLBACK HIT")
+    print("BUY CALLBACK HIT:", call.data)
     await call.answer()
 
     try:
