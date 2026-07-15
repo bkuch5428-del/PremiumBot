@@ -20,6 +20,9 @@ import reminder_scheduler
 
 logging.basicConfig(level=logging.INFO)
 
+_startup_logger = logging.getLogger(__name__)
+_startup_logger.info("RUNNING NEW BUILD")
+
 # ── Flask health-check server ─────────────────────────────────────────────────
 
 flask_app = Flask(__name__)
