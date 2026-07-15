@@ -328,20 +328,14 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
 
     elif status == "pending":
         await verifying_msg.edit_text(
-            "⏳ <b>Payment Pending</b>\n\n"
-            f"🆔 Order <b>#{html.escape(order_id)}</b>\n\n"
-            "Your payment is still being processed. Please wait a few minutes and tap "
-            "<b>✅ I Have Paid</b> again to re-check.",
+            "⏳ Payment not received yet. Please wait a moment and try again.",
             reply_markup=payment_details_keyboard(order_id),
         )
 
     else:
         # failed or API error
         await verifying_msg.edit_text(
-            "❌ <b>Payment Not Confirmed</b>\n\n"
-            f"🆔 Order <b>#{html.escape(order_id)}</b>\n\n"
-            "We could not verify your payment. Please complete the payment by scanning the QR "
-            "code and then tap <b>✅ I Have Paid</b> again.",
+            "❌ Payment not found.",
             reply_markup=payment_details_keyboard(order_id),
         )
 
