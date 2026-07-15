@@ -743,6 +743,15 @@ async def update_order_status(order_id: str, status: str) -> None:
     logger.debug("Order %s → %s", order_id, status)
 
 
+async def save_order_transaction_id(order_id: str, transaction_id: str) -> None:
+    """Persist the VC-assigned transaction_id on the order document."""
+    await _orders.update_one(
+        {"_id": order_id},
+        {"$set": {"transaction_id": transaction_id}},
+    )
+    logger.debug("Order %s — transaction_id saved: %s", order_id, transaction_id)
+
+
 async def approve_order(order_id: str) -> dict | None:
     """
     Approve an order:

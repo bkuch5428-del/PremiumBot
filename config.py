@@ -10,9 +10,6 @@ if not BOT_TOKEN:
 
 SOURCE_CHANNEL_ID: str = os.getenv("SOURCE_CHANNEL_ID", "-1004483132545")
 
-# Set this to your UPI QR code image URL to show it in the payment screen.
-QR_IMAGE_URL: str = os.getenv("QR_IMAGE_URL", "")
-
 SUPPORT_GROUP_URL: str = os.getenv("SUPPORT_GROUP_URL", "https://t.me/+i7Ox197t4205MTQ1")
 
 # Channel where new-user and activity events are logged.
@@ -32,6 +29,8 @@ if not ADMIN_IDS:
         "Example: ADMIN_IDS=123456789,987654321"
     )
 
-# VC Store payment verification API
+# VC Store payment API
 VC_API_KEY: str = os.getenv("VC_API_KEY", "")
 VC_API_URL: str = os.getenv("VC_API_URL", "https://vcapi.vcstore.site/payment_api.php")
+# Endpoint used to CREATE a new payment and receive the QR image URL
+VC_CREATE_URL: str = os.getenv("VC_CREATE_URL", "https://vcapi.vcstore.site/create_payment.php")
