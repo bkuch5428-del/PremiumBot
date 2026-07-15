@@ -134,6 +134,7 @@ async def _verify_payment_vc(order_id: str, amount: str) -> str:
     Call the VC Store payment verification API.
     Returns "success", "pending", or "failed".
     """
+    logger.info("API key loaded: %s", bool(VC_API_KEY))
     if not VC_API_URL or not VC_API_KEY:
         logger.warning("VC_API_URL or VC_API_KEY is not configured")
         return "error"
@@ -142,7 +143,8 @@ async def _verify_payment_vc(order_id: str, amount: str) -> str:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 VC_API_URL,
-                data={"api_key": VC_API_KEY, "order_id": order_id, "amount": amount},
+                params={"api_key": VC_API_KEY},
+                data={"order_id": order_id, "amount": amount},
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
                 data = await resp.json(content_type=None)
