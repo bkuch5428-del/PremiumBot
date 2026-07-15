@@ -83,13 +83,14 @@ async def _create_payment_vc(order_id: str, amount: str) -> dict | None:
 
     try:
         async with aiohttp.ClientSession() as session:
+            logger.info("CALLING VC CREATE API")
             async with session.post(
                 VC_CREATE_URL,
                 data={"api_key": VC_API_KEY, "order_id": order_id, "amount": amount},
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
                 data = await resp.json(content_type=None)
-                logger.info("VC create-payment response for order %s: %s", order_id, data)
+                logger.info("VC RESPONSE: %s", data)
 
                 status = str(data.get("status", "")).lower()
                 if status != "success":
@@ -163,6 +164,7 @@ async def _verify_payment_vc(order_id: str, amount: str) -> str:
 @router.callback_query(lambda c: c.data and c.data.startswith("buy:"))
 async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
     """User tapped Buy Now — load plan from DB, generate order, show payment details."""
+    logger.info("BUY CALLBACK HIT")
     await call.answer()
 
     try:
