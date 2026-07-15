@@ -7,8 +7,8 @@ it looks in the `reminders` collection for schedules whose first/second
 reminder is due and not yet sent, sends them, and marks them sent.
 
 Schedules are created/replaced in handlers/payment.py (callback_buy) and
-cancelled in database.py (approve_order) and handlers/payment.py (reject /
-cancel_order / cancel_proof). This module only sends what's already due.
+cancelled in database.py (approve_order) and handlers/payment.py (cancel_order).
+This module only sends what's already due.
 
 Launch with `asyncio.create_task(reminder_scheduler.run(bot))` — it never
 returns on its own.

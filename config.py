@@ -18,9 +18,6 @@ SUPPORT_GROUP_URL: str = os.getenv("SUPPORT_GROUP_URL", "https://t.me/+i7Ox197t4
 # Channel where new-user and activity events are logged.
 LOG_CHANNEL_ID: int = int(os.getenv("LOG_CHANNEL_ID", "-1003923230922"))
 
-# Channel where payment screenshots / UTRs are forwarded for admin review.
-PAYMENT_REVIEW_CHANNEL_ID: int = int(os.getenv("PAYMENT_REVIEW_CHANNEL_ID", "-1003290863151"))
-
 # Comma-separated list of Telegram user IDs that can access /admin.
 # Example: ADMIN_IDS=123456789,987654321
 _admin_ids_raw = os.getenv("ADMIN_IDS", "")
@@ -34,3 +31,7 @@ if not ADMIN_IDS:
         "Set it to a comma-separated list of Telegram user IDs that should have admin access.\n"
         "Example: ADMIN_IDS=123456789,987654321"
     )
+
+# VC Store payment verification API
+VC_API_KEY: str = os.getenv("VC_API_KEY", "")
+VC_API_URL: str = os.getenv("VC_API_URL", "https://vcapi.vcstore.site/payment_api.php")

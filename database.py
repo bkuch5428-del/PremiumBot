@@ -824,6 +824,24 @@ async def get_pending_orders() -> list[dict]:
     return result
 
 
+async def get_order(order_id: str) -> dict | None:
+    """Return a full order document as a plain dict, or None if not found."""
+    doc = await _orders.find_one({"_id": order_id})
+    if doc is None:
+        return None
+    return {
+        "order_id":      doc["_id"],
+        "user_id":       doc.get("user_id"),
+        "plan_name":     doc.get("plan_name", ""),
+        "plan_price":    doc.get("plan_price", ""),
+        "final_price":   doc.get("final_price") or doc.get("plan_price", ""),
+        "plan_validity": doc.get("plan_validity", ""),
+        "plan_id":       doc.get("plan_id"),
+        "access_link":   doc.get("access_link", ""),
+        "payment_status": doc.get("payment_status", ""),
+    }
+
+
 async def get_order_final_price(order_id: str) -> str | None:
     """Return the stored final_price for an order, falling back to plan_price.
     Returns None if the order does not exist."""

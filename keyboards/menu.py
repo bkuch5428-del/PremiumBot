@@ -243,29 +243,10 @@ def payment_details_keyboard(order_id: str) -> InlineKeyboardMarkup:
     )
 
 
-def await_proof_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_proof")],
-        ]
-    )
-
-
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🏠 Main Menu", callback_data="main_menu")],
-        ]
-    )
-
-
-def approve_reject_keyboard(order_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Approve", callback_data=f"approve:{order_id}"),
-                InlineKeyboardButton(text="❌ Reject",  callback_data=f"reject:{order_id}"),
-            ]
         ]
     )
 
