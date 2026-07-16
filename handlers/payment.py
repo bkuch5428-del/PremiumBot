@@ -124,6 +124,144 @@ async def _verify_payment_vc(order_id: str, amount: str) -> str:
         return "error"
 
 
+# ── Shared helper: create order + send QR + send payment message ──────────────
+
+
+async def _send_payment_screen(
+    bot: Bot,
+    chat_id: int,
+    user_id: int,
+    plan: dict,
+    plan_id: int | None,
+    final_price_str: str,
+    price_section: str,
+    discount_pct: int,
+) -> str | None:
+    """
+    Create a new order, send the QR photo and payment details message.
+    Saves both message IDs into _awaiting_proof so the failed-payment handler
+    can delete both messages when issuing a replacement.
+    Returns the new order_id, or None if order creation failed.
+    """
+    # Retry up to 5 times on PK collision
+    order_id: str | None = None
+    for _ in range(5):
+        candidate = _make_order_id()
+        try:
+            await create_order(
+                user_id=user_id,
+                plan_name=plan["name"],
+                plan_price=plan["price"],
+                plan_validity=plan["validity"],
+                order_id=candidate,
+                plan_id=plan_id,
+                access_link=plan["access_link"],
+                final_price=final_price_str,
+                referral_discount_used=discount_pct,
+            )
+            order_id = candidate
+            break
+        except Exception as exc:
+            if "UNIQUE" in str(exc).upper():
+                logger.warning("Order ID collision on %s — retrying", candidate)
+                continue
+            logger.exception("Failed to create order for user %s", user_id)
+            await bot.send_message(chat_id, "⚠️ Something went wrong. Please try again.")
+            return None
+
+    if order_id is None:
+        await bot.send_message(chat_id, "⚠️ Could not generate order. Please try again.")
+        return None
+
+    # Build payment message text
+    _default_tpl = (
+        "💳 <b>Payment Details</b>\n\n"
+        "📦 <b>Plan:</b> {plan_name}\n"
+        "{price_section}\n"
+        "⌛ <b>Validity:</b> {plan_validity}\n\n"
+        "📲 Scan the QR code above using any UPI app.\n\n"
+        "✅ <b>Pay ₹{final_price_str}</b> by scanning the <b>QR Code</b> above.\n"
+        "✓ After payment, click <b>✅ I Have Paid</b>\n\n"
+        "🆔 <b>Order:</b> #{order_id}"
+    )
+    payment_tpl = (await get_setting("payment_message")) or _default_tpl
+    _fmt_kwargs = dict(
+        plan_name=plan["name"],
+        plan_price=plan["price"],
+        plan_validity=plan["validity"],
+        order_id=order_id,
+        price_section=price_section,
+        final_price_str=final_price_str,
+    )
+    try:
+        payment_msg_text = payment_tpl.format(**_fmt_kwargs)
+    except (KeyError, ValueError, IndexError):
+        logger.warning("payment_message template is malformed — using default")
+        payment_msg_text = _default_tpl.format(**_fmt_kwargs)
+
+    # Send QR photo and capture its message ID
+    qr_url = _make_upi_qr_url(order_id, final_price_str)
+    logger.info("UPI QR URL for order %s: %s", order_id, qr_url)
+    qr_msg_id: int | None = None
+    try:
+        qr_msg = await bot.send_photo(chat_id=chat_id, photo=qr_url)
+        qr_msg_id = qr_msg.message_id
+    except Exception:
+        logger.exception("Failed to send QR image for order %s", order_id)
+
+    # Send payment details message and capture its message ID
+    pay_msg = await bot.send_message(
+        chat_id,
+        payment_msg_text,
+        reply_markup=payment_details_keyboard(order_id),
+    )
+
+    # Store full context for the verification handler
+    _awaiting_proof[user_id] = {
+        "order_id": order_id,
+        "plan_id": plan_id,
+        "plan_name": plan["name"],
+        "plan_price": plan["price"],
+        "final_price": final_price_str,
+        "plan_validity": plan["validity"],
+        "access_link": plan["access_link"],
+        "price_section": price_section,
+        "discount_pct": discount_pct,
+        "qr_msg_id": qr_msg_id,
+        "payment_msg_id": pay_msg.message_id,
+    }
+
+    # Schedule abandoned-payment reminders
+    _MAX_REMINDER_DELAY_MIN = 525600  # 1 year
+
+    def _clamped_delay(raw: str, fallback: int) -> int:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return fallback
+        if value <= 0:
+            return fallback
+        return min(value, _MAX_REMINDER_DELAY_MIN)
+
+    first_min = _clamped_delay(await get_setting("reminder_first_delay_min", "15"), 15)
+    second_min = _clamped_delay(
+        await get_setting("reminder_second_delay_min", "1440"), 1440
+    )
+    now = datetime.now(timezone.utc)
+    await set_pending_reminder(
+        user_id=user_id,
+        order_id=order_id,
+        plan_id=plan_id,
+        plan_name=plan["name"],
+        plan_price=plan["price"],
+        plan_validity=plan["validity"],
+        first_due=now + timedelta(minutes=first_min),
+        second_due=now + timedelta(minutes=second_min),
+    )
+
+    return order_id
+
+
 # ── Buy Now (buy:{plan_id}) ───────────────────────────────────────────────────
 
 
@@ -185,111 +323,15 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         f"💳 <b>Final Price:</b> ₹{final_price_str}"
     )
 
-    # Retry up to 5 times on PK collision
-    order_id: str | None = None
-    for _ in range(5):
-        candidate = _make_order_id()
-        try:
-            await create_order(
-                user_id=user.id,
-                plan_name=plan["name"],
-                plan_price=plan["price"],
-                plan_validity=plan["validity"],
-                order_id=candidate,
-                plan_id=plan_id,
-                access_link=plan["access_link"],
-                final_price=final_price_str,
-                referral_discount_used=discount_pct,
-            )
-            order_id = candidate
-            break
-        except Exception as exc:
-            if "UNIQUE" in str(exc).upper():
-                logger.warning("Order ID collision on %s — retrying", candidate)
-                continue
-            logger.exception("Failed to create order for user %s", user.id)
-            await call.message.answer("⚠️ Something went wrong. Please try again.")
-            return
-
-    if order_id is None:
-        await call.message.answer("⚠️ Could not generate order. Please try again.")
-        return
-
-    # Payment message
-    _default_tpl = (
-        "💳 <b>Payment Details</b>\n\n"
-        "📦 <b>Plan:</b> {plan_name}\n"
-        "{price_section}\n"
-        "⌛ <b>Validity:</b> {plan_validity}\n\n"
-        "📲 Scan the QR code above using any UPI app.\n\n"
-        "✅ <b>Pay ₹{final_price_str}</b> by scanning the <b>QR Code</b> above.\n"
-        "✓ After payment, click <b>✅ I Have Paid</b>\n\n"
-        "🆔 <b>Order:</b> #{order_id}"
-    )
-    payment_tpl = (await get_setting("payment_message")) or _default_tpl
-    _fmt_kwargs = dict(
-        plan_name=plan["name"],
-        plan_price=plan["price"],
-        plan_validity=plan["validity"],
-        order_id=order_id,
-        price_section=price_section,
-        final_price_str=final_price_str,
-    )
-    try:
-        payment_msg = payment_tpl.format(**_fmt_kwargs)
-    except (KeyError, ValueError, IndexError):
-        logger.warning("payment_message template is malformed — using default")
-        payment_msg = _default_tpl.format(**_fmt_kwargs)
-
-    # Build UPI QR and send it
-    qr_url = _make_upi_qr_url(order_id, final_price_str)
-    logger.info("UPI QR URL for order %s: %s", order_id, qr_url)
-    try:
-        await bot.send_photo(chat_id=call.message.chat.id, photo=qr_url)
-    except Exception:
-        logger.exception("Failed to send QR image for order %s", order_id)
-
-    await call.message.answer(
-        payment_msg, reply_markup=payment_details_keyboard(order_id)
-    )
-
-    # Store plan context for the verification handler
-    _awaiting_proof[user.id] = {
-        "order_id": order_id,
-        "plan_id": plan_id,
-        "plan_name": plan["name"],
-        "plan_price": plan["price"],
-        "final_price": final_price_str,
-        "plan_validity": plan["validity"],
-        "access_link": plan["access_link"],
-    }
-
-    # Schedule abandoned-payment reminders
-    _MAX_REMINDER_DELAY_MIN = 525600  # 1 year
-
-    def _clamped_delay(raw: str, fallback: int) -> int:
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            return fallback
-        if value <= 0:
-            return fallback
-        return min(value, _MAX_REMINDER_DELAY_MIN)
-
-    first_min = _clamped_delay(await get_setting("reminder_first_delay_min", "15"), 15)
-    second_min = _clamped_delay(
-        await get_setting("reminder_second_delay_min", "1440"), 1440
-    )
-    now = datetime.now(timezone.utc)
-    await set_pending_reminder(
+    await _send_payment_screen(
+        bot=bot,
+        chat_id=call.message.chat.id,
         user_id=user.id,
-        order_id=order_id,
+        plan=plan,
         plan_id=plan_id,
-        plan_name=plan["name"],
-        plan_price=plan["price"],
-        plan_validity=plan["validity"],
-        first_due=now + timedelta(minutes=first_min),
-        second_due=now + timedelta(minutes=second_min),
+        final_price_str=final_price_str,
+        price_section=price_section,
+        discount_pct=discount_pct,
     )
 
 
@@ -385,7 +427,7 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
         )
 
     else:
-        # failed or API error — log, issue a fresh order, send new QR
+        # failed or API error — log, delete both old messages, issue a fresh order
         await log_payment_failed(
             bot,
             user_id=user.id,
@@ -396,88 +438,47 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
             reason=status,
         )
 
-        # 1. Remove the old payment message (with its buttons) so the user
-        #    cannot tap "I Have Paid" against the cancelled order again.
+        # Delete the "verifying…" message
         try:
-            await call.message.delete()
+            await verifying_msg.delete()
         except Exception:
-            try:
-                await call.message.edit_reply_markup(reply_markup=None)
-            except Exception:
-                pass
+            pass
 
-        # 2. Mark old order as failed so it won't be verified again.
+        # Delete the old QR photo and old payment details message
+        chat_id = call.message.chat.id
+        for msg_id in (info.get("qr_msg_id"), info.get("payment_msg_id")):
+            if msg_id:
+                try:
+                    await bot.delete_message(chat_id, msg_id)
+                except Exception:
+                    pass
+
+        # Mark old order as failed and cancel its reminder
         try:
             await update_order_status(order_id, "failed")
         except Exception:
             logger.exception("Failed to mark old order %s as failed", order_id)
-
-        # 3. Cancel the old reminder.
         try:
             await cancel_reminder(user.id, order_id)
         except Exception:
             logger.exception("Failed to cancel reminder for order %s", order_id)
 
-        # 4. Generate a completely new order ID and create the DB record.
-        new_order_id: str | None = None
-        for _ in range(5):
-            candidate = _make_order_id()
-            try:
-                await create_order(
-                    user_id=user.id,
-                    plan_name=info.get("plan_name", ""),
-                    plan_price=info.get("plan_price", ""),
-                    plan_validity=info.get("plan_validity", ""),
-                    order_id=candidate,
-                    plan_id=info.get("plan_id"),
-                    access_link=info.get("access_link", ""),
-                    final_price=final_price,
-                )
-                new_order_id = candidate
-                break
-            except Exception as exc:
-                if "UNIQUE" in str(exc).upper():
-                    continue
-                logger.exception("Failed to create replacement order for user %s", user.id)
-                break
-
-        if not new_order_id:
-            await verifying_msg.edit_text(
-                "❌ Payment not found and a replacement order could not be created. "
-                "Please tap Buy Now to start over."
-            )
-            return
-
-        # 5. Update in-memory state with the new order ID.
-        _awaiting_proof[user.id] = {
-            **info,
-            "order_id": new_order_id,
+        # Re-issue the payment screen (new order ID + fresh QR, same plan/price/layout)
+        plan_dict = {
+            "name": info.get("plan_name", ""),
+            "price": info.get("plan_price", ""),
+            "validity": info.get("plan_validity", ""),
+            "access_link": info.get("access_link", ""),
         }
-
-        # 6. Send the notice, fresh QR, and new payment message.
-        note_text = (
-            "❌ <b>Payment not detected.</b>\n\n"
-            "A fresh payment QR has been generated.\n\n"
-            "💡 Please pay only using the new QR below.\n"
-            "Do not use the previous QR because it will no longer be verified.\n\n"
-            "If you have already paid and still face an issue, contact support."
-        )
-        try:
-            await verifying_msg.edit_text(note_text)
-        except Exception:
-            await call.message.answer(note_text)
-
-        new_qr_url = _make_upi_qr_url(new_order_id, final_price)
-        logger.info("Replacement QR URL for order %s: %s", new_order_id, new_qr_url)
-        try:
-            await bot.send_photo(chat_id=call.message.chat.id, photo=new_qr_url)
-        except Exception:
-            logger.exception("Failed to send replacement QR for order %s", new_order_id)
-
-        await call.message.answer(
-            f"🆔 <b>New Order:</b> #{new_order_id}\n"
-            f"💰 <b>Amount:</b> ₹{final_price}",
-            reply_markup=payment_details_keyboard(new_order_id),
+        await _send_payment_screen(
+            bot=bot,
+            chat_id=chat_id,
+            user_id=user.id,
+            plan=plan_dict,
+            plan_id=info.get("plan_id"),
+            final_price_str=final_price,
+            price_section=info.get("price_section", ""),
+            discount_pct=info.get("discount_pct", 0),
         )
 
 
