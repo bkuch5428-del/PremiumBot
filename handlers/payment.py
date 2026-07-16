@@ -43,7 +43,7 @@ from keyboards.menu import (
     main_menu_keyboard,
     plans_list_keyboard,
 )
-from handlers.log_channel import log_payment_started
+from handlers.log_channel import log_payment_started, log_payment_success, log_payment_failed
 
 logger = logging.getLogger(__name__)
 
@@ -353,6 +353,14 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
                 activation_text += f"🔗 <b>Access Link:</b>\n{access_link}\n\n"
             activation_text += "Thank you for your purchase! ❤️"
 
+            await log_payment_success(
+                bot,
+                user_id=user.id,
+                first_name=user.first_name,
+                plan_name=result["plan_name"],
+                amount=final_price,
+                order_id=order_id,
+            )
             try:
                 await verifying_msg.delete()
             except Exception:
@@ -376,6 +384,15 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
 
     else:
         # failed or API error
+        await log_payment_failed(
+            bot,
+            user_id=user.id,
+            first_name=user.first_name,
+            plan_name=info.get("plan_name", ""),
+            amount=final_price,
+            order_id=order_id,
+            reason=status,
+        )
         await verifying_msg.edit_text(
             "❌ Payment not found.",
             reply_markup=payment_details_keyboard(order_id),
