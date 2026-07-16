@@ -13,6 +13,8 @@ Sequence:
 import html
 import logging
 import random
+import time
+import urllib.parse
 from datetime import datetime, timezone, timedelta
 
 import aiohttp
@@ -20,11 +22,10 @@ import aiohttp
 from aiogram import Router, Bot
 from aiogram.types import CallbackQuery
 
-from config import VC_API_KEY, VC_API_URL, VC_CREATE_URL
+from config import VC_API_KEY, VC_API_URL
 from database import (
     create_order,
     update_order_status,
-    save_order_transaction_id,
     approve_order,
     get_order,
     get_order_final_price,
@@ -59,100 +60,26 @@ _PRODUCT_TEXT = "Hello, {first_name} 👋\n\nChoose a plan to get started 💫"
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_order_id() -> str:
-    return f"A{random.randint(100000, 999999)}"
+    return f"ORD{int(time.time())}"
+
+
+def _make_upi_qr_url(order_id: str, amount: str) -> str:
+    """Build a quickchart.io QR image URL that encodes the UPI payment URI."""
+    upi_uri = (
+        f"upi://pay?pa=paytm.s1dw5n0@pty"
+        f"&pn=VC+Payment+Gateway"
+        f"&tid={order_id}"
+        f"&tr={order_id}"
+        f"&tn=VC+Payment"
+        f"&am={amount}"
+        f"&cu=INR"
+    )
+    encoded = urllib.parse.quote(upi_uri, safe="")
+    return f"https://quickchart.io/qr?text={encoded}"
 
 
 def _now_ist() -> str:
     return datetime.now(_IST).strftime("%Y-%m-%d %H:%M:%S IST")
-
-
-async def _create_payment_vc(order_id: str, amount: str) -> dict | None:
-    """
-    Call the VC Store API to CREATE a new payment.
-
-    On success returns a dict with at least:
-        qr_url        – URL of the QR image to send to the user
-        transaction_id – VC-assigned transaction identifier (may be empty)
-        raw           – full API response (for debugging)
-
-    Returns None on any failure and logs the full API response.
-    """
-    if not VC_CREATE_URL or not VC_API_KEY:
-        logger.error("VC_CREATE_URL or VC_API_KEY is not configured — cannot create payment")
-        return None
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            payload = {"order_id": order_id, "amount": amount}
-            logger.info(
-                "CALLING VC CREATE API — url=%s params=api_key=*** payload=%s",
-                VC_CREATE_URL, payload,
-            )
-            async with session.post(
-                VC_CREATE_URL,
-                params={"api_key": VC_API_KEY},
-                data=payload,
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                http_status = resp.status
-                raw_text = await resp.text()
-                logger.info(
-                    "VC CREATE API HTTP %s — raw body: %r", http_status, raw_text
-                )
-
-                if not raw_text.strip():
-                    logger.error(
-                        "VC create-payment returned empty body (HTTP %s) for order %s",
-                        http_status, order_id,
-                    )
-                    return None
-
-                try:
-                    data = __import__("json").loads(raw_text)
-                except Exception:
-                    logger.error(
-                        "VC create-payment returned non-JSON (HTTP %s) for order %s — body: %r",
-                        http_status, order_id, raw_text,
-                    )
-                    return None
-
-                logger.info("VC RESPONSE parsed: %s", data)
-
-                status = str(data.get("status", "")).lower()
-                if status != "success":
-                    logger.error(
-                        "VC create-payment FAILED for order %s — full response: %s",
-                        order_id, data,
-                    )
-                    return None
-
-                # Accept any of the common field names the API might use
-                qr_url = (
-                    data.get("qr_image")
-                    or data.get("qr_url")
-                    or data.get("payment_url")
-                    or data.get("upi_qr")
-                    or ""
-                )
-                transaction_id = (
-                    data.get("transaction_id")
-                    or data.get("txn_id")
-                    or data.get("txnid")
-                    or ""
-                )
-
-                if not qr_url:
-                    logger.error(
-                        "VC create-payment returned no QR field for order %s — full response: %s",
-                        order_id, data,
-                    )
-                    return None
-
-                return {"qr_url": qr_url, "transaction_id": transaction_id, "raw": data}
-
-    except Exception:
-        logger.exception("VC create-payment API call failed for order %s", order_id)
-        return None
 
 
 async def _verify_payment_vc(order_id: str, amount: str) -> str:
@@ -303,31 +230,13 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         logger.warning("payment_message template is malformed — using default")
         payment_msg = _default_tpl.format(**_fmt_kwargs)
 
-    # Create payment via VC Store API and send the returned QR image
-    vc_payment = await _create_payment_vc(order_id, final_price_str)
-    if vc_payment:
-        transaction_id = vc_payment.get("transaction_id", "")
-        if transaction_id:
-            try:
-                await save_order_transaction_id(order_id, transaction_id)
-            except Exception:
-                logger.exception("Failed to save transaction_id for order %s", order_id)
-
-        try:
-            await bot.send_photo(chat_id=call.message.chat.id, photo=vc_payment["qr_url"])
-        except Exception:
-            logger.exception(
-                "Failed to send VC QR image for order %s — qr_url=%s",
-                order_id, vc_payment.get("qr_url"),
-            )
-    else:
-        logger.error(
-            "VC payment creation failed for order %s — no QR sent to user", order_id
-        )
-        await call.message.answer(
-            "⚠️ Could not generate a payment QR at this moment. Please try again."
-        )
-        return
+    # Build UPI QR and send it
+    qr_url = _make_upi_qr_url(order_id, final_price_str)
+    logger.info("UPI QR URL for order %s: %s", order_id, qr_url)
+    try:
+        await bot.send_photo(chat_id=call.message.chat.id, photo=qr_url)
+    except Exception:
+        logger.exception("Failed to send QR image for order %s", order_id)
 
     await call.message.answer(payment_msg, reply_markup=payment_details_keyboard(order_id))
 

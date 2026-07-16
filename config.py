@@ -29,8 +29,6 @@ if not ADMIN_IDS:
         "Example: ADMIN_IDS=123456789,987654321"
     )
 
-# VC Store payment API
+# VC Store payment verification API
 VC_API_KEY: str = os.getenv("VC_API_KEY", "")
 VC_API_URL: str = os.getenv("VC_API_URL", "https://vcapi.vcstore.site/payment_api.php")
-# Endpoint used to CREATE a new payment and receive the QR image URL
-VC_CREATE_URL: str = os.getenv("VC_CREATE_URL", "https://vcapi.vcstore.site/create_payment.php")
