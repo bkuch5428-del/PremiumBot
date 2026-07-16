@@ -94,16 +94,25 @@ async def _verify_payment_vc(order_id: str, amount: str) -> str:
         return "error"
 
     try:
+        params = {"api_key": VC_API_KEY, "order_id": order_id, "amount": amount}
         async with aiohttp.ClientSession() as session:
-            async with session.post(
+            async with session.get(
                 VC_API_URL,
-                params={"api_key": VC_API_KEY},
-                data={"order_id": order_id, "amount": amount},
+                params=params,
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
-                data = await resp.json(content_type=None)
+                raw_text = await resp.text()
+                final_url = str(resp.url)
+                http_status = resp.status
+                logger.info("Final Request URL: %s", final_url)
+                logger.info("HTTP Status: %s", http_status)
+                logger.info("Raw Response: %r", raw_text)
+                try:
+                    data = __import__("json").loads(raw_text)
+                except Exception:
+                    logger.error("VC API returned non-JSON for order %s", order_id)
+                    return "error"
                 status = str(data.get("status", "")).lower()
-                logger.info("VC API response for order %s: %s", order_id, data)
                 if status == "success":
                     return "success"
                 elif status == "pending":
