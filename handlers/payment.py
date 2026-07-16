@@ -256,6 +256,7 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
     # Store plan context for the verification handler
     _awaiting_proof[user.id] = {
         "order_id": order_id,
+        "plan_id": plan_id,
         "plan_name": plan["name"],
         "plan_price": plan["price"],
         "final_price": final_price_str,
@@ -310,6 +311,7 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
         if order_doc:
             info = {
                 "order_id": order_id,
+                "plan_id": order_doc.get("plan_id"),
                 "plan_name": order_doc.get("plan_name", ""),
                 "plan_price": order_doc.get("plan_price", ""),
                 "final_price": order_doc.get("final_price")
@@ -383,7 +385,7 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
         )
 
     else:
-        # failed or API error
+        # failed or API error — log, issue a fresh order, send new QR
         await log_payment_failed(
             bot,
             user_id=user.id,
@@ -393,9 +395,89 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
             order_id=order_id,
             reason=status,
         )
-        await verifying_msg.edit_text(
-            "❌ Payment not found.",
-            reply_markup=payment_details_keyboard(order_id),
+
+        # 1. Remove the old payment message (with its buttons) so the user
+        #    cannot tap "I Have Paid" against the cancelled order again.
+        try:
+            await call.message.delete()
+        except Exception:
+            try:
+                await call.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+        # 2. Mark old order as failed so it won't be verified again.
+        try:
+            await update_order_status(order_id, "failed")
+        except Exception:
+            logger.exception("Failed to mark old order %s as failed", order_id)
+
+        # 3. Cancel the old reminder.
+        try:
+            await cancel_reminder(user.id, order_id)
+        except Exception:
+            logger.exception("Failed to cancel reminder for order %s", order_id)
+
+        # 4. Generate a completely new order ID and create the DB record.
+        new_order_id: str | None = None
+        for _ in range(5):
+            candidate = _make_order_id()
+            try:
+                await create_order(
+                    user_id=user.id,
+                    plan_name=info.get("plan_name", ""),
+                    plan_price=info.get("plan_price", ""),
+                    plan_validity=info.get("plan_validity", ""),
+                    order_id=candidate,
+                    plan_id=info.get("plan_id"),
+                    access_link=info.get("access_link", ""),
+                    final_price=final_price,
+                )
+                new_order_id = candidate
+                break
+            except Exception as exc:
+                if "UNIQUE" in str(exc).upper():
+                    continue
+                logger.exception("Failed to create replacement order for user %s", user.id)
+                break
+
+        if not new_order_id:
+            await verifying_msg.edit_text(
+                "❌ Payment not found and a replacement order could not be created. "
+                "Please tap Buy Now to start over."
+            )
+            return
+
+        # 5. Update in-memory state with the new order ID.
+        _awaiting_proof[user.id] = {
+            **info,
+            "order_id": new_order_id,
+        }
+
+        # 6. Send the notice, fresh QR, and new payment message.
+        note_text = (
+            "❌ <b>Payment not detected.</b>\n\n"
+            "A fresh payment QR has been generated.\n\n"
+            "💡 Please pay only using the new QR below.\n"
+            "Do not use the previous QR because it will no longer be verified.\n\n"
+            "If you have already paid and still face an issue, contact support."
+        )
+        try:
+            await verifying_msg.edit_text(note_text)
+        except Exception:
+            await call.message.answer(note_text)
+
+        new_qr_url = _make_upi_qr_url(new_order_id, final_price)
+        logger.info("Replacement QR URL for order %s: %s", new_order_id, new_qr_url)
+        try:
+            await bot.send_photo(chat_id=call.message.chat.id, photo=new_qr_url)
+        except Exception:
+            logger.exception("Failed to send replacement QR for order %s", new_order_id)
+
+        await call.message.answer(
+            f"🆔 <b>New Order:</b> #{new_order_id}\n"
+            f"💰 <b>Amount:</b> ₹{final_price}",
+            reply_markup=payment_details_keyboard(new_order_id),
         )
 
 
