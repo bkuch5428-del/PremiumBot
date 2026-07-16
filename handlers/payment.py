@@ -427,7 +427,7 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
         )
 
     else:
-        # failed or API error — log, delete both old messages, issue a fresh order
+        # failed or API error — show note, delete old messages, issue a fresh order
         await log_payment_failed(
             bot,
             user_id=user.id,
@@ -438,20 +438,39 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
             reason=status,
         )
 
-        # Delete the "verifying…" message
-        try:
-            await verifying_msg.delete()
-        except Exception:
-            pass
-
-        # Delete the old QR photo and old payment details message
         chat_id = call.message.chat.id
-        for msg_id in (info.get("qr_msg_id"), info.get("payment_msg_id")):
-            if msg_id:
-                try:
-                    await bot.delete_message(chat_id, msg_id)
-                except Exception:
-                    pass
+
+        # 1. Show the note by editing the "verifying…" message in place
+        note_text = (
+            "❌ <b>Payment not detected.</b>\n\n"
+            "A fresh payment QR has been generated.\n\n"
+            "💡 Please pay only using the new QR below.\n"
+            "Do not use the previous QR because it will no longer be verified."
+        )
+        try:
+            await verifying_msg.edit_text(note_text)
+        except Exception:
+            try:
+                await bot.send_message(chat_id, note_text)
+            except Exception:
+                pass
+
+        # 2. Delete the old QR photo (message sent just before the payment message)
+        qr_msg_id = info.get("qr_msg_id")
+        if qr_msg_id:
+            try:
+                await bot.delete_message(chat_id, qr_msg_id)
+            except Exception:
+                pass
+
+        # 3. Delete the old payment details message (call.message IS that message)
+        try:
+            await call.message.delete()
+        except Exception:
+            try:
+                await call.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
 
         # Mark old order as failed and cancel its reminder
         try:
@@ -463,7 +482,7 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
         except Exception:
             logger.exception("Failed to cancel reminder for order %s", order_id)
 
-        # Re-issue the payment screen (new order ID + fresh QR, same plan/price/layout)
+        # 4. Re-issue the payment screen (new order ID + fresh QR, same plan/price/layout)
         plan_dict = {
             "name": info.get("plan_name", ""),
             "price": info.get("plan_price", ""),
