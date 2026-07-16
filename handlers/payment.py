@@ -59,6 +59,7 @@ _PRODUCT_TEXT = "Hello, {first_name} 👋\n\nChoose a plan to get started 💫"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _make_order_id() -> str:
     return f"ORD{int(time.time())}"
 
@@ -115,6 +116,7 @@ async def _verify_payment_vc(order_id: str, amount: str) -> str:
 
 
 # ── Buy Now (buy:{plan_id}) ───────────────────────────────────────────────────
+
 
 @router.callback_query(lambda c: c.data and c.data.startswith("buy:"))
 async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
@@ -238,16 +240,18 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
     except Exception:
         logger.exception("Failed to send QR image for order %s", order_id)
 
-    await call.message.answer(payment_msg, reply_markup=payment_details_keyboard(order_id))
+    await call.message.answer(
+        payment_msg, reply_markup=payment_details_keyboard(order_id)
+    )
 
     # Store plan context for the verification handler
     _awaiting_proof[user.id] = {
-        "order_id":      order_id,
-        "plan_name":     plan["name"],
-        "plan_price":    plan["price"],
-        "final_price":   final_price_str,
+        "order_id": order_id,
+        "plan_name": plan["name"],
+        "plan_price": plan["price"],
+        "final_price": final_price_str,
         "plan_validity": plan["validity"],
-        "access_link":   plan["access_link"],
+        "access_link": plan["access_link"],
     }
 
     # Schedule abandoned-payment reminders
@@ -263,7 +267,9 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         return min(value, _MAX_REMINDER_DELAY_MIN)
 
     first_min = _clamped_delay(await get_setting("reminder_first_delay_min", "15"), 15)
-    second_min = _clamped_delay(await get_setting("reminder_second_delay_min", "1440"), 1440)
+    second_min = _clamped_delay(
+        await get_setting("reminder_second_delay_min", "1440"), 1440
+    )
     now = datetime.now(timezone.utc)
     await set_pending_reminder(
         user_id=user.id,
@@ -279,6 +285,7 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
 
 # ── I Have Paid → automatic VC verification ───────────────────────────────────
 
+
 @router.callback_query(lambda c: c.data and c.data.startswith("paid:"))
 async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
     """Verify payment automatically via VC Store API and activate instantly on success."""
@@ -293,18 +300,21 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
         order_doc = await get_order(order_id)
         if order_doc:
             info = {
-                "order_id":      order_id,
-                "plan_name":     order_doc.get("plan_name", ""),
-                "plan_price":    order_doc.get("plan_price", ""),
-                "final_price":   order_doc.get("final_price") or order_doc.get("plan_price", "0"),
+                "order_id": order_id,
+                "plan_name": order_doc.get("plan_name", ""),
+                "plan_price": order_doc.get("plan_price", ""),
+                "final_price": order_doc.get("final_price")
+                or order_doc.get("plan_price", "0"),
                 "plan_validity": order_doc.get("plan_validity", ""),
-                "access_link":   order_doc.get("access_link", ""),
+                "access_link": order_doc.get("access_link", ""),
             }
         else:
             info = {"order_id": order_id}
         _awaiting_proof[user.id] = info
 
-    final_price = info.get("final_price") or await get_order_final_price(order_id) or "0"
+    final_price = (
+        info.get("final_price") or await get_order_final_price(order_id) or "0"
+    )
 
     # Show a "verifying" message while the API call is in-flight
     verifying_msg = await call.message.answer(
@@ -338,7 +348,9 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
                 await verifying_msg.delete()
             except Exception:
                 pass
-            await call.message.answer(activation_text, reply_markup=main_menu_keyboard())
+            await call.message.answer(
+                activation_text, reply_markup=main_menu_keyboard()
+            )
         else:
             # Order may have already been approved (e.g. double-tap)
             await verifying_msg.edit_text(
@@ -363,6 +375,7 @@ async def callback_i_have_paid(call: CallbackQuery, bot: Bot) -> None:
 
 # ── Cancel Order (from payment details screen) ────────────────────────────────
 
+
 @router.callback_query(lambda c: c.data and c.data.startswith("cancel_order:"))
 async def callback_cancel_order(call: CallbackQuery) -> None:
     await call.answer()
@@ -379,6 +392,7 @@ async def callback_cancel_order(call: CallbackQuery) -> None:
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────
+
 
 def clear_payment_state(user_id: int) -> None:
     """Remove any in-memory payment state for a user. Does NOT touch MongoDB."""
