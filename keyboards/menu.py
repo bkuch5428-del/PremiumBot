@@ -237,7 +237,7 @@ def plan_detail_keyboard(plan_id: int) -> InlineKeyboardMarkup:
 def payment_details_keyboard(order_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ I Have Paid", callback_data=f"paid:{order_id}")],
+            [InlineKeyboardButton(text="✅ Check Payment Status", callback_data=f"paid:{order_id}")],
             [InlineKeyboardButton(text="❌ Cancel",       callback_data=f"cancel_order:{order_id}")],
         ]
     )

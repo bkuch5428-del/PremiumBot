@@ -181,7 +181,7 @@ async def _send_payment_screen(
         "⌛ <b>Validity:</b> {plan_validity}\n\n"
         "📲 Scan the QR code above using any UPI app.\n\n"
         "✅ <b>Pay ₹{final_price_str}</b> by scanning the <b>QR Code</b> above.\n"
-        "✓ After payment, click <b>✅ I Have Paid</b>\n\n"
+        "✅ After paying, tap <b>Check Payment Status</b> — your plan unlocks instantly once the payment is confirmed.\n\n"
         "🆔 <b>Order:</b> #{order_id}"
     )
     payment_tpl = (await get_setting("payment_message")) or _default_tpl
