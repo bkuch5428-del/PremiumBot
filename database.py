@@ -66,7 +66,7 @@ _DEFAULT_PAYMENT = (
     "⌛ <b>Validity:</b> {plan_validity}\n\n"
     "📲 Scan the QR code above using any UPI app.\n\n"
     "✅ <b>Pay ₹{final_price_str}</b> by scanning the <b>QR Code</b> above.\n"
-    "✓ After payment, click <b>✅ I Have Paid</b>\n\n"
+    "✅ After paying, tap <b>Check Payment Status</b> — your plan unlocks instantly once the payment is confirmed.\n\n"
     "🆔 <b>Order:</b> #{order_id}"
 )
 
@@ -175,6 +175,20 @@ async def init_db() -> None:
             {"$set": {"value": _DEFAULT_PAYMENT}},
         )
         logger.info("Migrated payment_message to new price_section template")
+
+    # One-time migration: replace "✓ After payment, click ✅ I Have Paid" line
+    # with the new "Check Payment Status" wording. Only patches the stored value
+    # if it still contains the old line, so admin-customised templates are safe.
+    _OLD_PAID_LINE = "✓ After payment, click <b>✅ I Have Paid</b>"
+    _NEW_PAID_LINE = "✅ After paying, tap <b>Check Payment Status</b> — your plan unlocks instantly once the payment is confirmed."
+    pm_doc = await _settings.find_one({"_id": "payment_message"})
+    if pm_doc and _OLD_PAID_LINE in (pm_doc.get("value") or ""):
+        updated_value = (pm_doc["value"]).replace(_OLD_PAID_LINE, _NEW_PAID_LINE)
+        await _settings.update_one(
+            {"_id": "payment_message"},
+            {"$set": {"value": updated_value}},
+        )
+        logger.info("Migrated payment_message: updated 'I Have Paid' line to 'Check Payment Status'")
 
     logger.info("MongoDB connected — database %r ready", DB_NAME)
 
