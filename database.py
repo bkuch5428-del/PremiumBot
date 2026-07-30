@@ -149,6 +149,9 @@ async def init_db() -> None:
         ("referral_reward_pct",      "5"),   # discount % awarded per referral
         ("max_referral_discount",    "100"), # maximum total discount a user can earn
         ("max_referrals",            "0"),   # max referrals per referrer (0 = unlimited)
+        ("payment_mode",             "automatic"),  # "automatic" or "manual"
+        ("manual_payment_qr",        ""),    # QR image URL for manual payment mode
+        ("manual_upi_text",          ""),    # UPI ID / text shown in manual payment mode
     ]
     for key, value in _defaults:
         await _settings.update_one(
