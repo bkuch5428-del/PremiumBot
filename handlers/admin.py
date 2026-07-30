@@ -1738,32 +1738,55 @@ async def cb_pm_manual(call: CallbackQuery) -> None:
 
 
 @router.callback_query(lambda c: c.data == "admin_pm_qr")
-async def cb_pm_qr_start(call: CallbackQuery) -> None:
+async def cb_pm_qr_start(call: CallbackQuery, bot: Bot) -> None:
     if not _is_admin(call.from_user.id):
         await call.answer("⛔ Unauthorised.", show_alert=True)
         return
     await call.answer()
     _state[call.from_user.id] = {"step": "payment:qr", "data": {}}
-    current = (await get_setting("manual_payment_qr", "")) or ""
-    await call.message.edit_text(
+    current_file_id = (await get_setting("manual_payment_qr", "")) or ""
+    if current_file_id:
+        try:
+            await call.message.answer_photo(
+                photo=current_file_id,
+                caption=(
+                    "🖼 <b>Manual Payment QR</b>\n\n"
+                    "<b>Current QR image shown above.</b>\n\n"
+                    "Send a new photo to replace it.\n"
+                    "Type /cancel to abort."
+                ),
+            )
+            return
+        except Exception:
+            pass  # stale file_id — fall through to plain text prompt
+    await call.message.answer(
         "🖼 <b>Manual Payment QR</b>\n\n"
-        f"Current value: {current if current else '(not set)'}\n\n"
-        "Send the new QR image URL for manual payments.\n"
+        "No QR image is currently saved.\n\n"
+        "Send a photo of the QR code to save it.\n"
         "Type /cancel to abort.",
-        reply_markup=None,
     )
 
 
-@router.message(_in_state("payment:qr"), F.text)
-async def handle_pm_qr_input(message: Message) -> None:
-    if not _is_admin(message.from_user.id) or (message.text or "").startswith("/"):
+@router.message(_in_state("payment:qr"), F.photo)
+async def handle_pm_qr_photo(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
         return
     _state.pop(message.from_user.id, None)
-    await set_setting("manual_payment_qr", message.text.strip())
+    file_id = message.photo[-1].file_id
+    await set_setting("manual_payment_qr", file_id)
     await message.answer(
-        "✅ <b>Manual Payment QR updated!</b>",
+        "✅ <b>Manual Payment QR updated!</b>\n\n"
+        "The new QR code will be shown to users during manual payment.",
         reply_markup=admin_panel_keyboard(),
     )
+
+
+@router.message(_in_state("payment:qr"))
+async def handle_pm_qr_wrong_type(message: Message) -> None:
+    """Reject non-photo messages while waiting for the manual QR image."""
+    if not _is_admin(message.from_user.id) or (message.text or "").startswith("/"):
+        return
+    await message.answer("⚠️ Please send a <b>photo</b> of the QR code.")
 
 
 @router.callback_query(lambda c: c.data == "admin_pm_upi")
