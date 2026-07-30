@@ -20,7 +20,7 @@ from datetime import datetime, timezone, timedelta
 import aiohttp
 
 from aiogram import Router, Bot
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 
 from config import VC_API_KEY, VC_API_URL, LOG_CHANNEL_ID, ADMIN_IDS
 from database import (
