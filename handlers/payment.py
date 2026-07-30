@@ -22,7 +22,7 @@ import aiohttp
 from aiogram import Router, Bot
 from aiogram.types import CallbackQuery
 
-from config import VC_API_KEY, VC_API_URL
+from config import VC_API_KEY, VC_API_URL, LOG_CHANNEL_ID, ADMIN_IDS
 from database import (
     create_order,
     update_order_status,
@@ -41,6 +41,7 @@ from database import (
 from keyboards.menu import (
     payment_details_keyboard,
     manual_payment_keyboard,
+    manual_review_keyboard,
     main_menu_keyboard,
     plans_list_keyboard,
 )
@@ -54,6 +55,9 @@ _IST = timezone(timedelta(hours=5, minutes=30))
 
 # user_id -> { order_id, plan_name, plan_price, plan_validity, access_link, final_price }
 _awaiting_proof: dict[int, dict] = {}
+
+# user_id -> order_id  (set when user taps Upload Screenshot, cleared after photo received)
+_waiting_proof: dict[int, str] = {}
 
 _PRODUCT_TEXT = "Hello, {first_name} 👋\n\nChoose a plan to get started 💫"
 
@@ -664,14 +668,181 @@ async def callback_cancel_order(call: CallbackQuery) -> None:
 
 @router.callback_query(lambda c: c.data and c.data.startswith("upload_proof:"))
 async def callback_upload_proof(call: CallbackQuery) -> None:
-    """User tapped 📤 Upload Payment Screenshot on a manual payment screen."""
+    """User tapped 📤 Upload Payment Screenshot — ask them to send the photo."""
     await call.answer()
     order_id = call.data.split(":", 1)[1]
+    _waiting_proof[call.from_user.id] = order_id
     await call.message.answer(
         "📤 <b>Upload Payment Screenshot</b>\n\n"
         "Please send your payment screenshot as a <b>photo</b>.\n\n"
         f"🆔 <b>Order:</b> #{order_id}"
     )
+
+
+async def _user_is_waiting_proof(message: Message) -> bool:
+    return message.from_user.id in _waiting_proof
+
+
+@router.message(_user_is_waiting_proof, F.photo)
+async def handle_proof_photo(message: Message, bot: Bot) -> None:
+    """User sent their payment screenshot — forward to review channel."""
+    user = message.from_user
+    order_id = _waiting_proof.pop(user.id, None)
+    if not order_id:
+        return
+
+    # Fetch order details from DB
+    order = await get_order(order_id)
+    if not order:
+        await message.answer("⚠️ Order not found. Please contact support.")
+        return
+
+    # Mark order as pending (awaiting manual review)
+    await update_order_status(order_id, "pending")
+
+    # Build review caption
+    uname  = f"@{html.escape(user.username)}" if user.username else "—"
+    amount = order.get("final_price") or order.get("plan_price", "—")
+    caption = (
+        "💳 <b>New Manual Payment</b>\n\n"
+        f"👤 <b>Username:</b> {uname}\n"
+        f"🆔 <b>User ID:</b> <code>{user.id}</code>\n"
+        f"📦 <b>Plan:</b> {html.escape(order['plan_name'])}\n"
+        f"💰 <b>Amount:</b> ₹{html.escape(str(amount))}\n"
+        f"🆔 <b>Order ID:</b> <code>{order_id}</code>\n"
+        f"🕒 <b>Time:</b> {_now_ist()}"
+    )
+
+    # Forward screenshot + details + Approve/Reject to the review channel
+    try:
+        await bot.send_photo(
+            chat_id=LOG_CHANNEL_ID,
+            photo=message.photo[-1].file_id,
+            caption=caption,
+            reply_markup=manual_review_keyboard(order_id, user.id),
+        )
+    except Exception:
+        logger.exception("Failed to forward proof to review channel for order %s", order_id)
+
+    # Confirm receipt to user
+    await message.answer(
+        "✅ <b>Screenshot received!</b>\n\n"
+        "Your payment is under review. You will be notified once it's approved.\n\n"
+        f"🆔 <b>Order:</b> #{order_id}"
+    )
+
+
+@router.message(_user_is_waiting_proof)
+async def handle_proof_wrong_type(message: Message) -> None:
+    """Reject non-photo messages while waiting for the proof screenshot."""
+    if (message.text or "").startswith("/"):
+        _waiting_proof.pop(message.from_user.id, None)
+        return
+    await message.answer("⚠️ Please send your payment screenshot as a <b>photo</b>.")
+
+
+# ── Manual payment review — admin Approve / Reject from the review channel ────
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("manual_approve:"))
+async def callback_manual_approve(call: CallbackQuery, bot: Bot) -> None:
+    """Admin clicked ✅ Approve on a manual payment review message."""
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+
+    try:
+        _, order_id, user_id_str = call.data.split(":", 2)
+        user_id = int(user_id_str)
+    except (ValueError, IndexError):
+        await call.answer("⚠️ Invalid callback data.", show_alert=True)
+        return
+
+    # approve_order requires pending status (already set when screenshot was received)
+    result = await approve_order(order_id)
+    if not result:
+        try:
+            await call.message.edit_caption(
+                (call.message.caption or "") + "\n\n⚠️ Already processed.",
+                reply_markup=None,
+            )
+        except Exception:
+            pass
+        await call.answer("⚠️ Order already processed or not found.", show_alert=True)
+        return
+
+    sub_end_ist  = result["subscription_end"].astimezone(_IST)
+    expiry_str   = sub_end_ist.strftime("%d %b %Y")
+    access_link  = result.get("access_link", "")
+    approver_tag = f"@{call.from_user.username}" if call.from_user.username else str(call.from_user.id)
+
+    # Notify the user
+    activation_text = (
+        "🎉 <b>Payment Approved! Plan Activated!</b>\n\n"
+        f"📦 <b>Plan:</b> {html.escape(result['plan_name'])}\n"
+        f"⏳ <b>Validity:</b> {html.escape(result['plan_validity'])}\n"
+        f"📅 <b>Expires:</b> {expiry_str}\n\n"
+    )
+    if access_link:
+        activation_text += f"🔗 <b>Access Link:</b>\n{access_link}\n\n"
+    activation_text += "Thank you for your purchase! ❤️"
+
+    try:
+        await bot.send_message(user_id, activation_text, reply_markup=main_menu_keyboard())
+    except Exception:
+        logger.exception("Failed to notify user %s of manual approval", user_id)
+
+    # Update the review channel message to show it was handled
+    try:
+        await call.message.edit_caption(
+            (call.message.caption or "") + f"\n\n✅ <b>Approved by {html.escape(approver_tag)}</b>",
+            reply_markup=None,
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("manual_reject:"))
+async def callback_manual_reject(call: CallbackQuery, bot: Bot) -> None:
+    """Admin clicked ❌ Reject on a manual payment review message."""
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+
+    try:
+        _, order_id, user_id_str = call.data.split(":", 2)
+        user_id = int(user_id_str)
+    except (ValueError, IndexError):
+        await call.answer("⚠️ Invalid callback data.", show_alert=True)
+        return
+
+    await update_order_status(order_id, "rejected")
+    await cancel_reminder(user_id, order_id)
+
+    rejecter_tag = f"@{call.from_user.username}" if call.from_user.username else str(call.from_user.id)
+
+    # Notify the user
+    try:
+        await bot.send_message(
+            user_id,
+            "❌ <b>Payment Rejected</b>\n\n"
+            "Your payment screenshot could not be verified.\n\n"
+            "Please try again or contact support if you believe this is an error.",
+            reply_markup=main_menu_keyboard(),
+        )
+    except Exception:
+        logger.exception("Failed to notify user %s of manual rejection", user_id)
+
+    # Update the review channel message
+    try:
+        await call.message.edit_caption(
+            (call.message.caption or "") + f"\n\n❌ <b>Rejected by {html.escape(rejecter_tag)}</b>",
+            reply_markup=None,
+        )
+    except Exception:
+        pass
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────
@@ -680,3 +851,4 @@ async def callback_upload_proof(call: CallbackQuery) -> None:
 def clear_payment_state(user_id: int) -> None:
     """Remove any in-memory payment state for a user. Does NOT touch MongoDB."""
     _awaiting_proof.pop(user_id, None)
+    _waiting_proof.pop(user_id, None)

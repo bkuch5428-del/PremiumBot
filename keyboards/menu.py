@@ -256,6 +256,18 @@ def manual_payment_keyboard(order_id: str) -> InlineKeyboardMarkup:
     )
 
 
+def manual_review_keyboard(order_id: str, user_id: int) -> InlineKeyboardMarkup:
+    """Approve / Reject buttons posted to the review channel alongside the screenshot."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Approve", callback_data=f"manual_approve:{order_id}:{user_id}"),
+                InlineKeyboardButton(text="❌ Reject",  callback_data=f"manual_reject:{order_id}:{user_id}"),
+            ]
+        ]
+    )
+
+
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
