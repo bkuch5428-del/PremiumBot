@@ -793,6 +793,25 @@ async def callback_manual_approve(call: CallbackQuery, bot: Bot) -> None:
     except Exception:
         logger.exception("Failed to notify user %s of manual approval", user_id)
 
+    # Log the approval action
+    try:
+        amount = await get_order_final_price(order_id) or "—"
+        try:
+            chat = await bot.get_chat(user_id)
+            first_name = chat.first_name or str(user_id)
+        except Exception:
+            first_name = str(user_id)
+        await log_payment_success(
+            bot,
+            user_id=user_id,
+            first_name=first_name,
+            plan_name=result["plan_name"],
+            amount=amount,
+            order_id=order_id,
+        )
+    except Exception:
+        logger.exception("Failed to log manual approval for order %s", order_id)
+
     # Update the review channel message to show it was handled
     try:
         await call.message.edit_caption(
@@ -827,9 +846,8 @@ async def callback_manual_reject(call: CallbackQuery, bot: Bot) -> None:
     try:
         await bot.send_message(
             user_id,
-            "❌ <b>Payment Rejected</b>\n\n"
-            "Your payment screenshot could not be verified.\n\n"
-            "Please try again or contact support if you believe this is an error.",
+            "❌ <b>Payment could not be verified.</b>\n\n"
+            "Please contact support if you think this is incorrect.",
             reply_markup=main_menu_keyboard(),
         )
     except Exception:
