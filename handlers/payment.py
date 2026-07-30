@@ -40,6 +40,7 @@ from database import (
 )
 from keyboards.menu import (
     payment_details_keyboard,
+    manual_payment_keyboard,
     main_menu_keyboard,
     plans_list_keyboard,
 )
@@ -262,6 +263,130 @@ async def _send_payment_screen(
     return order_id
 
 
+# ── Manual payment screen (no VC QR) ─────────────────────────────────────────
+
+
+async def _send_manual_payment_screen(
+    bot: Bot,
+    chat_id: int,
+    user_id: int,
+    plan: dict,
+    plan_id: int | None,
+    final_price_str: str,
+    price_section: str,
+    discount_pct: int,
+) -> str | None:
+    """
+    Create a new order and show the admin-configured manual QR + UPI text.
+    Does NOT touch any VC payment logic.
+    Returns the new order_id, or None if order creation failed.
+    """
+    # Create order — same retry logic as automatic flow
+    order_id: str | None = None
+    for _ in range(5):
+        candidate = _make_order_id()
+        try:
+            await create_order(
+                user_id=user_id,
+                plan_name=plan["name"],
+                plan_price=plan["price"],
+                plan_validity=plan["validity"],
+                order_id=candidate,
+                plan_id=plan_id,
+                access_link=plan["access_link"],
+                final_price=final_price_str,
+                referral_discount_used=discount_pct,
+            )
+            order_id = candidate
+            break
+        except Exception as exc:
+            if "UNIQUE" in str(exc).upper():
+                logger.warning("Order ID collision on %s — retrying", candidate)
+                continue
+            logger.exception("Failed to create order for user %s", user_id)
+            await bot.send_message(chat_id, "⚠️ Something went wrong. Please try again.")
+            return None
+
+    if order_id is None:
+        await bot.send_message(chat_id, "⚠️ Could not generate order. Please try again.")
+        return None
+
+    # Fetch admin-configured manual payment details
+    manual_qr     = (await get_setting("manual_payment_qr", "")) or ""
+    manual_upi    = (await get_setting("manual_upi_text",   "")) or ""
+
+    # Build payment message
+    upi_line = f"\n💳 <b>UPI ID:</b> <code>{manual_upi}</code>\n" if manual_upi else ""
+    payment_msg_text = (
+        "💳 <b>Payment Details</b>\n\n"
+        f"📦 <b>Plan:</b> {plan['name']}\n"
+        f"{price_section}\n"
+        f"⌛ <b>Validity:</b> {plan['validity']}\n"
+        f"{upi_line}\n"
+        "📲 Scan the QR code above and pay the exact amount.\n\n"
+        "✅ After paying, tap <b>📤 Upload Payment Screenshot</b> to submit your proof.\n\n"
+        f"🆔 <b>Order:</b> #{order_id}"
+    )
+
+    # Send manual QR photo if available
+    qr_msg_id: int | None = None
+    if manual_qr:
+        try:
+            qr_msg = await bot.send_photo(chat_id=chat_id, photo=manual_qr)
+            qr_msg_id = qr_msg.message_id
+        except Exception:
+            logger.exception("Failed to send manual QR image for order %s", order_id)
+
+    # Send payment details message
+    pay_msg = await bot.send_message(
+        chat_id,
+        payment_msg_text,
+        reply_markup=manual_payment_keyboard(order_id),
+    )
+
+    # Store context (same shape as automatic flow for cancel/reminder compatibility)
+    _awaiting_proof[user_id] = {
+        "order_id":       order_id,
+        "plan_id":        plan_id,
+        "plan_name":      plan["name"],
+        "plan_price":     plan["price"],
+        "final_price":    final_price_str,
+        "plan_validity":  plan["validity"],
+        "access_link":    plan["access_link"],
+        "price_section":  price_section,
+        "discount_pct":   discount_pct,
+        "qr_msg_id":      qr_msg_id,
+        "payment_msg_id": pay_msg.message_id,
+        "mode":           "manual",
+    }
+
+    # Schedule abandoned-payment reminders (same as automatic flow)
+    _MAX_REMINDER_DELAY_MIN = 525600
+
+    def _clamped_delay(raw: str, fallback: int) -> int:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return fallback
+        return fallback if value <= 0 else min(value, _MAX_REMINDER_DELAY_MIN)
+
+    first_min  = _clamped_delay(await get_setting("reminder_first_delay_min",  "15"),   15)
+    second_min = _clamped_delay(await get_setting("reminder_second_delay_min", "1440"), 1440)
+    now = datetime.now(timezone.utc)
+    await set_pending_reminder(
+        user_id=user_id,
+        order_id=order_id,
+        plan_id=plan_id,
+        plan_name=plan["name"],
+        plan_price=plan["price"],
+        plan_validity=plan["validity"],
+        first_due=now + timedelta(minutes=first_min),
+        second_due=now + timedelta(minutes=second_min),
+    )
+
+    return order_id
+
+
 # ── Buy Now (buy:{plan_id}) ───────────────────────────────────────────────────
 
 
@@ -323,16 +448,31 @@ async def callback_buy(call: CallbackQuery, bot: Bot) -> None:
         f"💳 <b>Final Price:</b> ₹{final_price_str}"
     )
 
-    await _send_payment_screen(
-        bot=bot,
-        chat_id=call.message.chat.id,
-        user_id=user.id,
-        plan=plan,
-        plan_id=plan_id,
-        final_price_str=final_price_str,
-        price_section=price_section,
-        discount_pct=discount_pct,
-    )
+    # Route to manual or automatic payment screen based on current setting
+    payment_mode = (await get_setting("payment_mode", "automatic")) or "automatic"
+
+    if payment_mode == "manual":
+        await _send_manual_payment_screen(
+            bot=bot,
+            chat_id=call.message.chat.id,
+            user_id=user.id,
+            plan=plan,
+            plan_id=plan_id,
+            final_price_str=final_price_str,
+            price_section=price_section,
+            discount_pct=discount_pct,
+        )
+    else:
+        await _send_payment_screen(
+            bot=bot,
+            chat_id=call.message.chat.id,
+            user_id=user.id,
+            plan=plan,
+            plan_id=plan_id,
+            final_price_str=final_price_str,
+            price_section=price_section,
+            discount_pct=discount_pct,
+        )
 
 
 # ── I Have Paid → automatic VC verification ───────────────────────────────────
@@ -516,6 +656,21 @@ async def callback_cancel_order(call: CallbackQuery) -> None:
     await call.message.answer(
         _PRODUCT_TEXT.format(first_name=call.from_user.first_name),
         reply_markup=plans_list_keyboard(plans) if plans else main_menu_keyboard(),
+    )
+
+
+# ── Upload proof (manual payment — user taps the screenshot button) ───────────
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("upload_proof:"))
+async def callback_upload_proof(call: CallbackQuery) -> None:
+    """User tapped 📤 Upload Payment Screenshot on a manual payment screen."""
+    await call.answer()
+    order_id = call.data.split(":", 1)[1]
+    await call.message.answer(
+        "📤 <b>Upload Payment Screenshot</b>\n\n"
+        "Please send your payment screenshot as a <b>photo</b>.\n\n"
+        f"🆔 <b>Order:</b> #{order_id}"
     )
 
 

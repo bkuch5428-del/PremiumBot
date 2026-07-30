@@ -246,6 +246,16 @@ def payment_details_keyboard(order_id: str) -> InlineKeyboardMarkup:
     )
 
 
+def manual_payment_keyboard(order_id: str) -> InlineKeyboardMarkup:
+    """Keyboard shown on the manual payment screen."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Upload Payment Screenshot", callback_data=f"upload_proof:{order_id}")],
+            [InlineKeyboardButton(text="❌ Cancel",                    callback_data=f"cancel_order:{order_id}")],
+        ]
+    )
+
+
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
