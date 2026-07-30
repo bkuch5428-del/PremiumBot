@@ -28,6 +28,9 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="👥 Referral Settings", callback_data="admin_referral"),
             ],
             [
+                InlineKeyboardButton(text="💳 Payment Settings", callback_data="admin_payment_settings"),
+            ],
+            [
                 InlineKeyboardButton(text="📊 Statistics", callback_data="admin_stats"),
                 InlineKeyboardButton(text="📢 Broadcast",  callback_data="admin_broadcast"),
             ],
@@ -268,6 +271,21 @@ def referral_settings_keyboard(enabled: bool) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📊 Referral Statistics",                callback_data="admin_ref_stats")],
             [InlineKeyboardButton(text="🔄 Reset Referral Data",                callback_data="admin_ref_reset")],
             [InlineKeyboardButton(text="⬅️ Back",                               callback_data="admin_cancel")],
+        ]
+    )
+
+
+def payment_settings_keyboard(mode: str) -> InlineKeyboardMarkup:
+    """Sub-panel for Payment Settings. Marks the active mode with ✅."""
+    auto_mark   = "✅ " if mode == "automatic" else ""
+    manual_mark = "✅ " if mode == "manual"    else ""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"{auto_mark}🟢 Automatic Payment",      callback_data="admin_pm_automatic")],
+            [InlineKeyboardButton(text=f"{manual_mark}🟠 Manual Payment",        callback_data="admin_pm_manual")],
+            [InlineKeyboardButton(text="🖼 Change Manual Payment QR",            callback_data="admin_pm_qr")],
+            [InlineKeyboardButton(text="📝 Change Manual UPI Text",              callback_data="admin_pm_upi")],
+            [InlineKeyboardButton(text="⬅️ Back",                                callback_data="admin_cancel")],
         ]
     )
 

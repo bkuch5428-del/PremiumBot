@@ -60,6 +60,7 @@ from keyboards.menu import (
     reminder_settings_keyboard,
     referral_settings_keyboard,
     referral_reset_confirm_keyboard,
+    payment_settings_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -1677,5 +1678,118 @@ async def handle_link_value(message: Message) -> None:
     await update_plan(plan_id, access_link=message.text.strip())
     await message.answer(
         "✅ Access link updated successfully!",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+
+# ── Payment Settings ──────────────────────────────────────────────────────────
+
+async def _payment_settings_panel(target) -> None:
+    """Show (or re-show) the Payment Settings sub-panel."""
+    mode = (await get_setting("payment_mode", "automatic")) or "automatic"
+    mode_label = "🟢 Automatic" if mode == "automatic" else "🟠 Manual"
+    qr_val  = (await get_setting("manual_payment_qr",  "")) or ""
+    upi_val = (await get_setting("manual_upi_text",    "")) or ""
+    text = (
+        "💳 <b>Payment Settings</b>\n\n"
+        f"Active mode: <b>{mode_label}</b>\n"
+        f"Manual QR: {'✅ set' if qr_val else '⬜ not set'}\n"
+        f"Manual UPI text: {'✅ set' if upi_val else '⬜ not set'}\n\n"
+        "Select an option:"
+    )
+    kb = payment_settings_keyboard(mode)
+    if isinstance(target, CallbackQuery):
+        try:
+            await target.message.edit_text(text, reply_markup=kb)
+        except Exception:
+            await target.message.answer(text, reply_markup=kb)
+    else:
+        await target.answer(text, reply_markup=kb)
+
+
+@router.callback_query(lambda c: c.data == "admin_payment_settings")
+async def cb_payment_settings_panel(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    _state.pop(call.from_user.id, None)
+    await _payment_settings_panel(call)
+
+
+@router.callback_query(lambda c: c.data == "admin_pm_automatic")
+async def cb_pm_automatic(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await set_setting("payment_mode", "automatic")
+    await call.answer("🟢 Switched to Automatic Payment.", show_alert=True)
+    await _payment_settings_panel(call)
+
+
+@router.callback_query(lambda c: c.data == "admin_pm_manual")
+async def cb_pm_manual(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await set_setting("payment_mode", "manual")
+    await call.answer("🟠 Switched to Manual Payment.", show_alert=True)
+    await _payment_settings_panel(call)
+
+
+@router.callback_query(lambda c: c.data == "admin_pm_qr")
+async def cb_pm_qr_start(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    _state[call.from_user.id] = {"step": "payment:qr", "data": {}}
+    current = (await get_setting("manual_payment_qr", "")) or ""
+    await call.message.edit_text(
+        "🖼 <b>Manual Payment QR</b>\n\n"
+        f"Current value: {current if current else '(not set)'}\n\n"
+        "Send the new QR image URL for manual payments.\n"
+        "Type /cancel to abort.",
+        reply_markup=None,
+    )
+
+
+@router.message(_in_state("payment:qr"), F.text)
+async def handle_pm_qr_input(message: Message) -> None:
+    if not _is_admin(message.from_user.id) or (message.text or "").startswith("/"):
+        return
+    _state.pop(message.from_user.id, None)
+    await set_setting("manual_payment_qr", message.text.strip())
+    await message.answer(
+        "✅ <b>Manual Payment QR updated!</b>",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+
+@router.callback_query(lambda c: c.data == "admin_pm_upi")
+async def cb_pm_upi_start(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    _state[call.from_user.id] = {"step": "payment:upi", "data": {}}
+    current = (await get_setting("manual_upi_text", "")) or ""
+    await call.message.edit_text(
+        "📝 <b>Manual UPI Text</b>\n\n"
+        f"Current value: {current if current else '(not set)'}\n\n"
+        "Send the new UPI ID or payment text to display during manual payment.\n"
+        "Type /cancel to abort.",
+        reply_markup=None,
+    )
+
+
+@router.message(_in_state("payment:upi"), F.text)
+async def handle_pm_upi_input(message: Message) -> None:
+    if not _is_admin(message.from_user.id) or (message.text or "").startswith("/"):
+        return
+    _state.pop(message.from_user.id, None)
+    await set_setting("manual_upi_text", message.text.strip())
+    await message.answer(
+        "✅ <b>Manual UPI text updated!</b>",
         reply_markup=admin_panel_keyboard(),
     )
