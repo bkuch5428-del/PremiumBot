@@ -81,7 +81,7 @@ def _make_upi_qr_url(order_id: str, amount: str) -> str:
         f"&cu=INR"
     )
     encoded = urllib.parse.quote(upi_uri, safe="")
-    return f"https://quickchart.io/qr?text={encoded}"
+    return f"https://quickchart.io/qr?text={encoded}&size=1000&ecLevel=H&format=png&margin=2"
 
 
 def _now_ist() -> str:
