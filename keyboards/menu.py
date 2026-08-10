@@ -193,7 +193,7 @@ def admin_confirm_save_keyboard() -> InlineKeyboardMarkup:
 
 # ── User-facing plan list (dynamic) ───────────────────────────────────────────
 
-_SUPPORT_URL = "https://t.me/+biQdXipbbJ4xODA1"
+_SUPPORT_URL = "https://t.me/+a0bn6M0FzXUxNmY9"
 
 def plans_list_keyboard(plans: list[dict]) -> InlineKeyboardMarkup:
     """Show all plans as selectable buttons, with Support & Get Discount once at the bottom."""
