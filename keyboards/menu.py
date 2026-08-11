@@ -35,6 +35,9 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📢 Broadcast",  callback_data="admin_broadcast"),
             ],
             [
+                InlineKeyboardButton(text="📢 Premium Subscribers", callback_data="admin_premium_subscribers"),
+            ],
+            [
                 InlineKeyboardButton(text="📋 Pending Payments", callback_data="admin_pending"),
                 InlineKeyboardButton(text="📦 Plans",            callback_data="admin_plans"),
             ],

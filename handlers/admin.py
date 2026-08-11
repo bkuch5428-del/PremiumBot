@@ -46,6 +46,7 @@ from database import (
     get_referral_stats,
     reset_referral_data,
     admin_add_referrals,
+    _orders,
 )
 from keyboards.menu import (
     admin_panel_keyboard,
@@ -223,6 +224,64 @@ async def cb_plans_list(call: CallbackQuery) -> None:
         )
     text = "📦 <b>All Plans</b>\n\n" + "\n\n".join(lines)
     await call.message.edit_text(text, reply_markup=admin_panel_keyboard())
+
+
+@router.callback_query(lambda c: c.data == "admin_premium_subscribers")
+async def cb_premium_subscribers(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    plans = await get_all_plans()
+    if not plans:
+        await call.message.edit_text(
+            "📢 <b>Premium Subscribers</b>\n\nNo plans found.",
+            reply_markup=admin_panel_keyboard(),
+        )
+        return
+    await call.message.edit_text(
+        "📢 <b>Premium Subscribers</b>\n\nSelect a plan:",
+        reply_markup=admin_plan_list_keyboard(plans, "admin_ps"),
+    )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin_ps:"))
+async def cb_premium_subscribers_plan(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer()
+    try:
+        plan_id = int(call.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await call.message.edit_text(
+            "⚠️ Invalid plan.",
+            reply_markup=admin_panel_keyboard(),
+        )
+        return
+
+    plan = await get_plan(plan_id)
+    if not plan:
+        await call.message.edit_text(
+            "⚠️ Plan not found.",
+            reply_markup=admin_panel_keyboard(),
+        )
+        return
+
+    user_ids = await _orders.distinct(
+        "user_id",
+        {
+            "payment_status": "approved",
+            "plan_id": plan_id,
+        },
+    )
+
+    await call.message.edit_text(
+        "📢 <b>Premium Subscribers</b>\n\n"
+        f"Plan: {html.escape(plan['name'])}\n"
+        f"Premium Subscribers: {len(user_ids)}",
+        reply_markup=admin_panel_keyboard(),
+    )
 
 
 @router.callback_query(lambda c: c.data == "admin_pending")
