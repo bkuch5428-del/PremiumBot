@@ -83,6 +83,17 @@ def admin_plan_list_keyboard(plans: list[dict], cb_prefix: str) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def premium_subscribers_preview_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Send", callback_data="admin_ps_send"),
+                InlineKeyboardButton(text="❌ Cancel", callback_data="admin_ps_cancel"),
+            ],
+        ]
+    )
+
+
 def admin_edit_fields_keyboard(plan_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

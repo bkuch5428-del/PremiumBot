@@ -51,6 +51,7 @@ from database import (
 from keyboards.menu import (
     admin_panel_keyboard,
     admin_plan_list_keyboard,
+    premium_subscribers_preview_keyboard,
     admin_edit_fields_keyboard,
     admin_delete_confirm_keyboard,
     admin_demo_done_keyboard,
@@ -279,9 +280,59 @@ async def cb_premium_subscribers_plan(call: CallbackQuery) -> None:
     await call.message.edit_text(
         "📢 <b>Premium Subscribers</b>\n\n"
         f"Plan: {html.escape(plan['name'])}\n"
-        f"Premium Subscribers: {len(user_ids)}",
-        reply_markup=admin_panel_keyboard(),
+        f"Premium Subscribers: {len(user_ids)}\n\n"
+        "Send the complete custom broadcast message.\n"
+        "You can use Telegram formatting, emojis, and line breaks.\n\n"
+        "Type /cancel to exit.",
+        reply_markup=None,
     )
+    _state[call.from_user.id] = {
+        "step": "premium_subscribers:message",
+        "data": {
+            "plan_id": plan_id,
+            "plan_name": plan["name"],
+            "subscriber_count": len(user_ids),
+        },
+    }
+
+
+@router.message(_in_state("premium_subscribers:message"), F.text)
+async def handle_premium_subscribers_message(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    if message.text and message.text.startswith("/"):
+        return
+
+    st = _state.get(message.from_user.id)
+    if not st:
+        return
+
+    data = st["data"]
+    data["message_html"] = message.html_text
+    await message.answer(
+        "📢 <b>Broadcast Preview</b>\n\n"
+        f"Plan: {html.escape(data['plan_name'])}\n"
+        f"Premium Subscribers: {data['subscriber_count']}\n\n"
+        f"{data['message_html']}",
+        reply_markup=premium_subscribers_preview_keyboard(),
+    )
+    st["step"] = "premium_subscribers:preview"
+
+
+@router.callback_query(lambda c: c.data == "admin_ps_send")
+async def cb_premium_subscribers_send(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await call.answer("Sending will be added in the next step.", show_alert=True)
+
+
+@router.callback_query(lambda c: c.data == "admin_ps_cancel")
+async def cb_premium_subscribers_cancel(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("⛔ Unauthorised.", show_alert=True)
+        return
+    await _cancel(call)
 
 
 @router.callback_query(lambda c: c.data == "admin_pending")
