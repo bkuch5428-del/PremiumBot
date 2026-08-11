@@ -22,7 +22,7 @@ import logging
 from aiogram import Router, Bot, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 
 from config import ADMIN_IDS, SOURCE_CHANNEL_ID
 import handlers.settings as _settings_module  # for cross-module state clearing
@@ -320,11 +320,94 @@ async def handle_premium_subscribers_message(message: Message) -> None:
 
 
 @router.callback_query(lambda c: c.data == "admin_ps_send")
-async def cb_premium_subscribers_send(call: CallbackQuery) -> None:
+async def cb_premium_subscribers_send(call: CallbackQuery, bot: Bot) -> None:
     if not _is_admin(call.from_user.id):
         await call.answer("⛔ Unauthorised.", show_alert=True)
         return
-    await call.answer("Sending will be added in the next step.", show_alert=True)
+
+    st = _state.get(call.from_user.id)
+    if not st or st.get("step") != "premium_subscribers:preview":
+        await call.answer("⛔ This preview is no longer active.", show_alert=True)
+        return
+
+    data = st["data"]
+    plan_id = data["plan_id"]
+    message_html = data["message_html"]
+    st["step"] = "premium_subscribers:sending"
+    await call.answer()
+
+    user_ids = await _orders.distinct(
+        "user_id",
+        {
+            "payment_status": "approved",
+            "plan_id": plan_id,
+        },
+    )
+    total = len(user_ids)
+    sent = 0
+    failed = 0
+
+    def _progress_text() -> str:
+        return (
+            "📤 <b>Sending...</b>\n\n"
+            f"Total: {total}\n"
+            f"✅ Sent: {sent}\n"
+            f"❌ Failed: {failed}\n"
+            f"⏳ Remaining: {total - sent - failed}"
+        )
+
+    try:
+        await call.message.edit_text(_progress_text())
+    except Exception:
+        logger.exception("Failed to show Premium Subscribers broadcast progress")
+
+    for index, user_id in enumerate(user_ids, start=1):
+        delivered = False
+        try:
+            for attempt in range(2):
+                try:
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text=message_html,
+                    )
+                    delivered = True
+                    break
+                except TelegramRetryAfter as exc:
+                    if attempt == 1:
+                        raise
+                    await asyncio.sleep(exc.retry_after)
+        except (TelegramForbiddenError, TelegramBadRequest):
+            logger.info(
+                "Premium Subscribers delivery rejected for user %s",
+                user_id,
+            )
+        except Exception:
+            logger.exception(
+                "Premium Subscribers delivery failed for user %s",
+                user_id,
+            )
+
+        if delivered:
+            sent += 1
+        else:
+            failed += 1
+
+        # Avoid excessive edit requests while still showing live progress.
+        if index == total or index % 10 == 0:
+            try:
+                await call.message.edit_text(_progress_text())
+            except Exception:
+                logger.exception("Failed to update Premium Subscribers progress")
+
+        await asyncio.sleep(0.05)
+
+    _state.pop(call.from_user.id, None)
+    await call.message.edit_text(
+        "📊 <b>Broadcast Complete</b>\n\n"
+        f"Premium Subscribers: {total}\n"
+        f"✅ Sent: {sent}\n"
+        f"❌ Failed: {failed}",
+    )
 
 
 @router.callback_query(lambda c: c.data == "admin_ps_cancel")
